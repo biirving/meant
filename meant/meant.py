@@ -5,30 +5,43 @@ from einops import repeat
 from attention import attention
 from temporal import temporal
 from rotary_embedding_torch import RotaryEmbedding
-
+import math
 # because
 MAX_SEQ_LENGTH = 3333
 
-class encoder(nn.Module):
+# two separate encoders? or one encoder?
+class initialEncoder(nn.Module):
     def __init__(self, dim, num_heads):
         """
         The initial encoder for extracting relevant features from the multimodal input.
         """
-        super(encoder, self).__init__()
+        super(initialEncoder, self).__init__()
         self.dim = dim
         self.num_heads = num_heads
-        self.xPos = RotaryEmbedding(dim)
+        print(math.floor(dim/num_heads/2))
+        self.xPos = RotaryEmbedding(math.floor(dim/num_heads/2), use_xpos = True)
         self.encode = nn.ModuleList([nn.LayerNorm(dim), 
                                     nn.Linear(dim, dim), 
                                     attention(num_heads, dim, self.xPos), 
                                     nn.LayerNorm(dim), 
                                     nn.Linear(dim, dim)])
-        self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim)])
-    
+        self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim, dim)])
+
     def forward(self, input):
-        inter = self.encode(input)
-        output = self.encode2(inter + input)
-        return output
+        inter = input
+        #print(input)
+        for mod in self.encode:
+        #    print(inter.shape)
+        #    print(mod)
+            inter = mod(inter)
+        #    print(inter)
+        # there should be a residual connection
+        inter = inter + input
+        final_resid = inter.clone()
+        for mod in self.encode2:
+            inter = mod(inter)
+        # then another residual connection before the output is processed
+        return inter + final_resid
 
 
 class temporalEncoder(nn.Module):
@@ -45,11 +58,13 @@ class temporalEncoder(nn.Module):
                                             nn.Linear(dim, dim)])
     def forward(self, input):
         inter = self.temp_embeding.view(input.shape[0], self.lag, self.dim) + input
-        return self.temp_encode(inter)
+        for encode in self.temp_encode:
+            inter = encode(inter)
+        return inter
 
 
 class meant(nn.Module):
-    def __init__(self, text_dim, image_dim, price_dim, num_heads, height, width, patch_res, lag, num_classes, num_encoders = 5, channels=3):
+    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, num_heads= 8, num_encoders = 1, channels=3):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -81,19 +96,20 @@ class meant(nn.Module):
         # b = batch
         # l = lag period (how many images are being processed for each input)
         self.patchEmbed = nn.Sequential(
-            Rearrange('b l c (h p1) (w p2) -> b l (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
-            nn.Linear(self.patch_dim, image_dim),)
-        
-        self.encoders = nn.ModuleList([encoder(self.dim, num_heads)] * num_encoders)
-        self.temporal_encoding = temporalEncoder(self.dim, num_heads, lag)
+            # not using the patch dimenions? instead creating one huge vector
+            Rearrange('b l c (h p1) (w p2) -> b l (h w p1 p2 c)', p1 = patch_res, p2 = patch_res),
+            nn.Linear(self.patch_dim * self.n, image_dim),)
 
-        # temporal dim?
+        self.encoders = nn.ModuleList([initialEncoder(self.dim, num_heads) for i in range(num_encoders)])
+        self.temporal_encoding = temporalEncoder(self.dim, num_heads, lag)
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes)])
 
     def forward(self, tweets, images, prices):
         image_embed = self.patchEmbed(images)
         input = torch.cat((tweets, image_embed, prices), dim = 2)
-        initial_encode = self.encoders(input)
-        temporal_encode = self.temporal_encoding(initial_encode)
-        output = self.mlpHead(temporal_encode)
+        for encoder in self.encoders:
+            input = encoder.forward(input)
+        output = self.temporal_encoding(input)
+        for mod in self.mlpHead:
+            output = mod(output)
         return output

@@ -26,21 +26,24 @@ class attention(nn.Module):
 
         # these weights will be initialized randomly
         # in terms of the weights, they will eventually attend to different parts of the inputs in a similar way
-        self.q = nn.Linear(self.dim, self.Dh * self.num_heads, dtype=torch.float64)
-        self.v = nn.Linear(self.dim, self.Dh * self.num_heads, dtype=torch.float64)
-        self.k = nn.Linear(self.dim, self.Dh * self.num_heads, dtype=torch.float64)
+        self.q = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+        self.v = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+        self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         
     def forward(self, input):
         # q, k, v matrices
         q_mat = rearrange(self.q(input), 'b l (h d) -> b l h d', h = self.num_heads)
         v_mat = rearrange(self.k(input), 'b l (h d) -> b l h d', h = self.num_heads)
         k_mat = rearrange(self.v(input), 'b l (h d) -> b l h d', h = self.num_heads)
-
+        print(q_mat.shape)
         # apply positional embeddings before softmax function
         q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
-        
+        print(q_mat.shape)
+        print(q_mat)
+        print('k mat', k_mat.shape)
         # Compute attention scores using dot product of queries and keys
         scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
+        print('scores', scores.shape)
 
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
@@ -56,6 +59,6 @@ class attention(nn.Module):
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
         # reshape for the linear layer
-        inter = rearrange(inter, 'b l h n d -> b l n (h d)')
+        inter = rearrange(inter, 'b l h d -> b l (h d)')
         output = self.multi_mad(inter)
         return output

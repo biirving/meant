@@ -24,16 +24,16 @@ class temporal(nn.Module):
 
         # these weights will be initialized randomly
         # in terms of the weights, they will eventually attend to different parts of the inputs in a similar way
-        self.q = nn.Linear(self.dim, self.Dh * self.num_heads, dtype=torch.float64)
-        self.v = nn.Linear(self.dim, self.Dh * self.num_heads, dtype=torch.float64)
-        self.k = nn.Linear(self.dim, self.Dh * self.num_heads, dtype=torch.float64)
+        self.q = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+        self.v = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+        self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         
     # the input will be in the shape of: 
     # batch, lag, vector
     def forward(self, input):
         # q, k, v matrices
         # we want to use the query vector for the target day only, and attend to the entire input from this vector
-        q_mat = rearrange(self.q(input[input.shape[0] - 1]), 'b (h d) -> b h d', h = self.num_heads)
+        q_mat = rearrange(self.q(input[:, input.shape[1] - 1]), 'b (h d) -> b h d', h = self.num_heads)
         v_mat = rearrange(self.k(input), 'b l (h d) -> b l h d', h = self.num_heads)
         k_mat = rearrange(self.v(input), 'b l (h d) -> b l h d', h = self.num_heads)
         
@@ -54,6 +54,6 @@ class temporal(nn.Module):
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
         # reshape for the linear layer
-        inter = rearrange(inter, 'b h n d -> b n (h d)')
+        inter = rearrange(inter, 'b l h d -> b l (h d)')
         output = self.multi_mad(inter)
         return output
