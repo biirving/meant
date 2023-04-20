@@ -35,7 +35,7 @@ class attention(nn.Module):
     def forward(self, input):
         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
-
+ 
         q_mat = self.pos_emb.rotate_queries_or_keys(q_mat)
         k_mat = self.pos_emb.rotate_queries_or_keys(k_mat)
 

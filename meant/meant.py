@@ -41,6 +41,11 @@ class visionEncoder(nn.Module):
         # then another residual connection before the output is processed
         return inter + final_resid
 
+class languageEncoder(nn.Module):
+    def __init__(self, dim, num_heads):
+        super(languageEncoder, self).__init__()
+        self.dim = dim
+        self.num_heads = num_heads
 
 class temporalEncoder(nn.Module):
     def __init__(self, dim, num_heads, lag):
@@ -57,7 +62,6 @@ class temporalEncoder(nn.Module):
                                             nn.Linear(dim, dim)])
     def forward(self, input):
         b, l, n, _ = input.shape
-        print(self.temp_embeding[:, :(n + 1)].shape)
         input += self.temp_embeding[:, :(n + 1)]
         for encode in self.temp_encode:
             input = encode(input)
