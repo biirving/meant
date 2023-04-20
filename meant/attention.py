@@ -3,7 +3,7 @@ from torch import nn
 from einops import rearrange
 import math
 import torch
-from rotary_embedding_torch import RotaryEmbedding
+from rotary_embedding_torch import apply_rotary_emb, RotaryEmbedding, broadcat
 
 """
 A classic attention mechanism with xPos embedding support.
@@ -11,13 +11,15 @@ A classic attention mechanism with xPos embedding support.
 class attention(nn.Module):
 
     # the default values in the original paper for num_heads and dim are 5 and 50 respectively
-    def __init__(self, num_heads, dim, xPos:RotaryEmbedding, mask=False, droput=0.):
+    def __init__(self, num_heads, dim, pos_emb:RotaryEmbedding, mask=False, droput=0.):
         super(attention, self).__init__()
+
+        # what is the dimension of the attention head
         self.num_heads = num_heads
         self.dim = dim
         self.Dh = int(self.dim/self.num_heads)
         self.dropout = nn.Dropout(droput)
-        self.xPos = xPos
+        self.pos_emb = pos_emb
         self.mask =mask
 
         self.softmax = nn.Softmax(dim = -1)
@@ -31,19 +33,14 @@ class attention(nn.Module):
         self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         
     def forward(self, input):
-        # q, k, v matrices
-        q_mat = rearrange(self.q(input), 'b l (h d) -> b l h d', h = self.num_heads)
-        v_mat = rearrange(self.k(input), 'b l (h d) -> b l h d', h = self.num_heads)
-        k_mat = rearrange(self.v(input), 'b l (h d) -> b l h d', h = self.num_heads)
-        print(q_mat.shape)
-        # apply positional embeddings before softmax function
-        q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
-        print(q_mat.shape)
-        print(q_mat)
-        print('k mat', k_mat.shape)
+        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
+                                                        (self.q(input), self.v(input), self.k(input)))
+
+        q_mat = self.pos_emb.rotate_queries_or_keys(q_mat)
+        k_mat = self.pos_emb.rotate_queries_or_keys(k_mat)
+
         # Compute attention scores using dot product of queries and keys
-        scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
-        print('scores', scores.shape)
+        scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
 
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
@@ -59,6 +56,7 @@ class attention(nn.Module):
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
         # reshape for the linear layer
-        inter = rearrange(inter, 'b l h d -> b l (h d)')
+        inter = rearrange(inter, 'b l h n d -> b l n (h d)')
         output = self.multi_mad(inter)
+        output = self.dropout(output)
         return output

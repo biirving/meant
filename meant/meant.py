@@ -10,34 +10,32 @@ import math
 MAX_SEQ_LENGTH = 3333
 
 # two separate encoders? or one encoder?
-class initialEncoder(nn.Module):
+class visionEncoder(nn.Module):
     def __init__(self, dim, num_heads):
         """
         The initial encoder for extracting relevant features from the multimodal input.
         """
-        super(initialEncoder, self).__init__()
+        super(visionEncoder, self).__init__()
         self.dim = dim
         self.num_heads = num_heads
-        print(math.floor(dim/num_heads/2))
-        self.xPos = RotaryEmbedding(math.floor(dim/num_heads/2), use_xpos = True)
+
+        # so, the xPos embeddings will focus on the pixel case
+        self.posEmbed = RotaryEmbedding(
+        dim = math.floor(dim/num_heads/2))
+        #self.xPos = RotaryEmbedding(math.floor(dim/num_heads/2), use_xpos = True)
         self.encode = nn.ModuleList([nn.LayerNorm(dim), 
                                     nn.Linear(dim, dim), 
-                                    attention(num_heads, dim, self.xPos), 
+                                    attention(num_heads, dim, self.posEmbed), 
                                     nn.LayerNorm(dim), 
                                     nn.Linear(dim, dim)])
         self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim, dim)])
 
     def forward(self, input):
         inter = input
-        #print(input)
         for mod in self.encode:
-        #    print(inter.shape)
-        #    print(mod)
             inter = mod(inter)
-        #    print(inter)
-        # there should be a residual connection
         inter = inter + input
-        final_resid = inter.clone()
+        final_resid = inter
         for mod in self.encode2:
             inter = mod(inter)
         # then another residual connection before the output is processed
@@ -49,7 +47,8 @@ class temporalEncoder(nn.Module):
         super(temporalEncoder, self).__init__()
         self.dim = dim
         self.num_heads = num_heads
-        self.temp_embeding = torch.randn(1, lag, dim)
+        self.n = 196
+        self.temp_embeding = torch.randn(1, lag, self.n, dim)
         self.lag = lag
         self.temp_encode = nn.ModuleList([nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim), 
@@ -57,12 +56,15 @@ class temporalEncoder(nn.Module):
                                             nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim)])
     def forward(self, input):
-        inter = self.temp_embeding.view(input.shape[0], self.lag, self.dim) + input
+        b, l, n, _ = input.shape
+        print(self.temp_embeding[:, :(n + 1)].shape)
+        input += self.temp_embeding[:, :(n + 1)]
         for encode in self.temp_encode:
-            inter = encode(inter)
-        return inter
+            input = encode(input)
+        return input
 
-
+# WE PROCESS THE TWO MODALITIES WITH DIFFERENT ENCODERS
+# first strategy: work with vision and language separately. I need a clear path forwards.
 class meant(nn.Module):
     def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, num_heads= 8, num_encoders = 1, channels=3):
         """
@@ -97,19 +99,20 @@ class meant(nn.Module):
         # l = lag period (how many images are being processed for each input)
         self.patchEmbed = nn.Sequential(
             # not using the patch dimenions? instead creating one huge vector
-            Rearrange('b l c (h p1) (w p2) -> b l (h w p1 p2 c)', p1 = patch_res, p2 = patch_res),
-            nn.Linear(self.patch_dim * self.n, image_dim),)
+            Rearrange('b l c (h p1) (w p2) -> b l (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+            nn.Linear(self.patch_dim, image_dim),)
 
-        self.encoders = nn.ModuleList([initialEncoder(self.dim, num_heads) for i in range(num_encoders)])
-        self.temporal_encoding = temporalEncoder(self.dim, num_heads, lag)
-        self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes)])
+        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
+        self.temporal_encoding = temporalEncoder(image_dim, num_heads, lag)
+        self.mlpHead = nn.ModuleList([nn.LayerNorm(image_dim), nn.Linear(image_dim, num_classes)])
 
     def forward(self, tweets, images, prices):
         image_embed = self.patchEmbed(images)
-        input = torch.cat((tweets, image_embed, prices), dim = 2)
-        for encoder in self.encoders:
+        #input = torch.cat((tweets, image_embed, prices), dim = 3)
+        input = image_embed
+        for encoder in self.visionEncoders:
             input = encoder.forward(input)
         output = self.temporal_encoding(input)
         for mod in self.mlpHead:
-            output = mod(output)
+            output = mod(output[:, 0, :])
         return output

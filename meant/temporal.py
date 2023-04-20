@@ -7,6 +7,8 @@ import torch
 """
 A temporal attention mechanism.
 """
+
+# needs refactoring
 class temporal(nn.Module):
 
     # the default values in the original paper for num_heads and dim are 5 and 50 respectively
@@ -33,12 +35,14 @@ class temporal(nn.Module):
     def forward(self, input):
         # q, k, v matrices
         # we want to use the query vector for the target day only, and attend to the entire input from this vector
-        q_mat = rearrange(self.q(input[:, input.shape[1] - 1]), 'b (h d) -> b h d', h = self.num_heads)
-        v_mat = rearrange(self.k(input), 'b l (h d) -> b l h d', h = self.num_heads)
-        k_mat = rearrange(self.v(input), 'b l (h d) -> b l h d', h = self.num_heads)
+
+        # the queries should attend to one another
+        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
+                                                        (self.q(input), self.v(input), self.k(input)))
+
         
         # Compute attention scores using dot product of queries and keys
-        scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
+        scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
 
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
@@ -54,6 +58,6 @@ class temporal(nn.Module):
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
         # reshape for the linear layer
-        inter = rearrange(inter, 'b l h d -> b l (h d)')
+        inter = rearrange(inter, 'b l h n d -> b l n (h d)')
         output = self.multi_mad(inter)
         return output
