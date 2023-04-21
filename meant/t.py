@@ -2,15 +2,20 @@ from meant import meant
 import torch
 import json
 import torchvision.transforms as transforms
+import torch
+from transformers import AutoModel, AutoTokenizer
 
-new = meant(126, 126, 4, 224, 224, 16, 3, 2)
+tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base", return_tensors = "pt", use_fast=False)
+bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
 
-"""
+print(bertweet.embeddings)
+# is there a point to even having a text_dim?
+new = meant(768, 126, 4, 224, 224, 16, 3, 2, bertweet.embeddings)
+
 # this is our long range encoding
 image = torch.randn((3, 3, 3, 224, 224))
 
 from PIL import Image
-
 
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -19,15 +24,37 @@ transform = transforms.Compose([
 ])
 
 # Open the image file
-image_actual = Image.open("/home/benjamin/Desktop/ml/michinaga_extensions/src/dataUtils/graphs/macd/AAPL/1999-12-09.png")
-yuh = transform(image_actual)
-print(yuh.shape)
+#image_actual = Image.open("/home/benjamin/Desktop/ml/michinaga_extensions/src/dataUtils/graphs/macd/AAPL/1999-12-09.png")
+#yuh = transform(image_actual)
+#print(yuh.shape)
 
+#tweet_file = open('../../michinaga_extensions/src/dataUtils/newTweets/AAPL/2022-04-10.json')
+#text = tweet_file.readlines()
+#for t in range(len(text)):
+#    tweet_dict = json.loads(text[t])
+#    input = tweet_dict['text']
+#    
+# should we have the lag period contained within each text line?
+text = ["holy function apple is so", "dub", "hallo"]
+text2 = ["apple sucked today", "dub", "fuck"]
+text3 = ["apple was awesome today", "dub", "shite"]
+
+text = torch.tensor([tokenizer.encode(text)])
+text2 = torch.tensor([tokenizer.encode(text2)])
+text3 = torch.tensor([tokenizer.encode(text3)])
 price = torch.randn((3, 3, 196, 4))
-text = torch.randn((3, 3, 196, 126))
-what = new.forward(text, image, price)
-print(what)
-"""
+print('text shape', text.shape)
+print('text shape', text2.shape)
+text_input = torch.cat((text, text2, text3), dim = 0)
+print('close', text_input.shape)
+print(bertweet.forward(text_input))
+
+#text_input = torch.randn((3, 5))
+#text = torch.randn((1, 7)).int()
+what = new.forward(text_input.int(), image, price)
+#print(what)
+
+
 """
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -46,7 +73,7 @@ for t in range(len(text)):
 
 print(bertweet.embeddings)
 
-print(bertweet.embeddings(torch.tensor([vector])).shape)
+
 """
 
 """
