@@ -33,16 +33,13 @@ class xPosAttention(nn.Module):
         self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         
     def forward(self, input):
-        print(input.shape)
         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b s (h d) -> b h s d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
-        print(q_mat.shape)
-        print(k_mat.shape)
+       # print(q_mat)
         q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
-
         # Compute attention scores using dot product of queries and keys
         scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
-
+        print(scores)
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
         def applyMask(scores):

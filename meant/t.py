@@ -8,9 +8,8 @@ from transformers import AutoModel, AutoTokenizer
 tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base", return_tensors = "pt", use_fast=False)
 bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
 
-print(bertweet.embeddings)
 # is there a point to even having a text_dim?
-new = meant(768, 126, 4, 224, 224, 16, 3, 2, bertweet.embeddings)
+new = meant(126, 126, 4, 224, 224, 16, 3, 2, bertweet.embeddings)
 
 # this is our long range encoding
 image = torch.randn((3, 3, 3, 224, 224))
@@ -35,6 +34,7 @@ transform = transforms.Compose([
 #    input = tweet_dict['text']
 #    
 # should we have the lag period contained within each text line?
+# so we have a single tweet from each day over the lag period?
 text = ["holy function apple is so", "dub", "hallo"]
 text2 = ["apple sucked today", "dub", "fuck"]
 text3 = ["apple was awesome today", "dub", "shite"]
@@ -43,16 +43,16 @@ text = torch.tensor([tokenizer.encode(text)])
 text2 = torch.tensor([tokenizer.encode(text2)])
 text3 = torch.tensor([tokenizer.encode(text3)])
 price = torch.randn((3, 3, 196, 4))
-print('text shape', text.shape)
-print('text shape', text2.shape)
+#print('text shape', text.shape)
+#print('text shape', text2.shape)
 text_input = torch.cat((text, text2, text3), dim = 0)
-print('close', text_input.shape)
-print(bertweet.forward(text_input))
+#print('close', text_input.shape)
+#print(bertweet.forward(text_input))
 
 #text_input = torch.randn((3, 5))
 #text = torch.randn((1, 7)).int()
 what = new.forward(text_input.int(), image, price)
-#print(what)
+print(what)
 
 
 """

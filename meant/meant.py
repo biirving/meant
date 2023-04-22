@@ -12,7 +12,7 @@ from transformers import AutoModel, AutoTokenizer
 # because
 MAX_SEQ_LENGTH = 3333
 
-# two separate encoders? or one encoder?
+# should the vision encoder encode temporal information?
 class visionEncoder(nn.Module):
     def __init__(self, dim, num_heads):
         """
@@ -56,7 +56,7 @@ class languageEncoder(nn.Module):
 
         # so, the xPos embeddings will focus on the pixel case
         self.xPos = RotaryEmbedding(
-            dim = 48,
+            dim = 7,
             use_xpos = True   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
         )
 
@@ -76,6 +76,8 @@ class languageEncoder(nn.Module):
         for mod in self.encode2:
             inter = mod(inter)
         return inter + final_resid
+
+
 
 class temporalEncoder(nn.Module):
     def __init__(self, dim, num_heads, lag):
@@ -98,8 +100,7 @@ class temporalEncoder(nn.Module):
             input = encode(input)
         return input
 
-# WE PROCESS THE TWO MODALITIES WITH DIFFERENT ENCODERS
-# first strategy: work with vision and language separately. I need a clear path forwards.
+
 class meant(nn.Module):
     def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=3):
         """
@@ -126,7 +127,10 @@ class meant(nn.Module):
         self.n = int((height * width) / (patch_res ** 2))
 
         # pretrained language embedding from hugging face model
-        self.embedding = embedding
+        self.embedding = nn.ModuleList([embedding, nn.Linear(768, text_dim)])
+
+        # classification token for the image component. Will be passed to the temporal attention mechanism
+        #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
 
         # the patch embedding for the image
         # we have to apply it to every image in the lag period
@@ -147,7 +151,9 @@ class meant(nn.Module):
 
     def forward(self, tweets, images, prices):
         # how to embed multiple days worth of information?
-        words = self.embedding(tweets)
+        words = tweets
+        for mod in self.embedding:
+            words = mod(words)
         image = self.patchEmbed(images)
     
         for encoder in self.languageEncoders:
@@ -158,13 +164,16 @@ class meant(nn.Module):
 
         # so how are we going to deal with batch size
         # lag period, sequence length, sequence dim
-        print('words', words.shape)
+        print('words', words)
 
-        # batch
+        # batch 
+        # should we use a classification head here?
         print('image', image.shape)
+        print(words[:,0,:].view(3, 1, 126))
+        temporal_input = torch.cat((words[:,0,:], image))
 
         # where concatenation happens?
-        output = self.temporal_encoding(input)
+        output = self.temporal_encoding(image)
         for mod in self.mlpHead:
             output = mod(output[:, 0, :])
         return output

@@ -33,10 +33,9 @@ class temporal(nn.Module):
     # batch, lag, vector
     def forward(self, input):
         # q, k, v matrices
-        # we want to use the query vector for the target day only, and attend to the entire input from this vector
-        
-
-        # the queries should attend to one another
+        # the queries should attend to one another.
+        # the key difference with this mechanism is that the attention component focuses primarily on the target day.
+        # so we should generate queries for the target day only
         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
 
