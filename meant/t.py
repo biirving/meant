@@ -9,7 +9,7 @@ tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base", return_tensors 
 bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
 
 # is there a point to even having a text_dim?
-new = meant(126, 126, 4, 224, 224, 16, 3, 2, bertweet.embeddings)
+new = meant(768, 126, 4, 224, 224, 16, 3, 2, bertweet.embeddings)
 
 # this is our long range encoding
 image = torch.randn((3, 3, 3, 224, 224))
@@ -51,9 +51,16 @@ text_input = torch.cat((text, text2, text3), dim = 0)
 
 #text_input = torch.randn((3, 5))
 #text = torch.randn((1, 7)).int()
+
 what = new.forward(text_input.int(), image, price)
 print(what)
 
+okay = torch.randn(24)
+alright = torch.randn(5)
+print(alright)
+print(okay)
+okay = torch.einsum('..., f -> ... f', alright, okay)
+print(okay)
 
 """
 import torch

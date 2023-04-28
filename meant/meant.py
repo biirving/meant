@@ -24,7 +24,8 @@ class visionEncoder(nn.Module):
 
         # so, the xPos embeddings will focus on the pixel case
         self.posEmbed = RotaryEmbedding(
-        dim = math.floor(dim/num_heads/2))
+        dim = math.floor(dim/num_heads/2),
+        freqs_for='pixel')
         self.encode = nn.ModuleList([nn.LayerNorm(dim), 
                                     nn.Linear(dim, dim), 
                                     attention(num_heads, dim, self.posEmbed), 
@@ -56,8 +57,9 @@ class languageEncoder(nn.Module):
 
         # so, the xPos embeddings will focus on the pixel case
         self.xPos = RotaryEmbedding(
-            dim = 7,
-            use_xpos = True   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
+            dim = 48,
+            #use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
+            #xpos_scale_base=2
         )
 
         self.encode = nn.ModuleList([nn.LayerNorm(dim), 
@@ -164,12 +166,12 @@ class meant(nn.Module):
 
         # so how are we going to deal with batch size
         # lag period, sequence length, sequence dim
-        print('words', words)
+        #print('words', words)
 
         # batch 
         # should we use a classification head here?
-        print('image', image.shape)
-        print(words[:,0,:].view(3, 1, 126))
+        #print('image', image.shape)
+        # lets bring this temporal attention home
         temporal_input = torch.cat((words[:,0,:], image))
 
         # where concatenation happens?
@@ -177,3 +179,6 @@ class meant(nn.Module):
         for mod in self.mlpHead:
             output = mod(output[:, 0, :])
         return output
+
+
+
