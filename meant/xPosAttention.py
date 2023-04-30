@@ -41,6 +41,7 @@ class xPosAttention(nn.Module):
         #q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
         q_mat = self.xPos.rotate_queries_or_keys(q_mat)
         k_mat = self.xPos.rotate_queries_or_keys(k_mat)
+        
         # Compute attention scores using dot product of queries and keys
         scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
        # print('scores', scores)
@@ -60,6 +61,7 @@ class xPosAttention(nn.Module):
         weights = torch.softmax(scores, dim=-1)
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
+
         # reshape for the linear layer
         inter = rearrange(inter, 'b h s d -> b s (h d)')
 

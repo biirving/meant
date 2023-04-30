@@ -151,6 +151,8 @@ class meant(nn.Module):
         self.temporal_encoding = temporalEncoder(image_dim, num_heads, lag)
         self.mlpHead = nn.ModuleList([nn.LayerNorm(image_dim), nn.Linear(image_dim, num_classes)])
 
+        self.projection = nn.ModuleList([nn.LayerNorm(3840), nn.Linear(3840, 2304)])
+
     def forward(self, tweets, images, prices):
         # how to embed multiple days worth of information?
         words = tweets
@@ -158,26 +160,43 @@ class meant(nn.Module):
             words = mod(words)
         image = self.patchEmbed(images)
     
+        # encode the text input
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
+        
+        
+        # flatten the tensor into a dimension for projection
+        # the dimension of the text sequence length dimension will be 2 + lag
+        words = torch.flatten(words, start_dim = 1, end_dim = -1)
+        for proj in self.projection:
+            words = proj.forward(words)
+        
+        # then use the repeat operation? But we then lose the temporal relevance 
+        # of the tweet sequence, which is the important short term aspect of the model
+        words = words.view(3, 3, 1, 768)
+        words = words.repeat((1, 1, 196, 1))
 
+        # encode the image input
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
 
         # so how are we going to deal with batch size
         # lag period, sequence length, sequence dim
-        #print('words', words)
+        print('words', words.shape)
+        # we could have some sort of projection into higher dimensionality
+
 
         # batch 
         # should we use a classification head here?
-        #print('image', image.shape)
+        print('image', image.shape)
+
         # lets bring this temporal attention home
-        temporal_input = torch.cat((words[:,0,:], image))
+        temporal_input = torch.cat((words, image))
 
         # where concatenation happens?
         output = self.temporal_encoding(image)
         for mod in self.mlpHead:
-            output = mod(output[:, 0, :])
+            output = mod(output)
         return output
 
 
