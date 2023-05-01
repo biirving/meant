@@ -53,14 +53,8 @@ text_input = torch.cat((text, text2, text3), dim = 0)
 #text = torch.randn((1, 7)).int()
 
 what = new.forward(text_input.int(), image, price)
-print(what)
+print(what.shape)
 
-okay = torch.randn(24)
-alright = torch.randn(5)
-print(alright)
-print(okay)
-okay = torch.einsum('..., f -> ... f', alright, okay)
-print(okay)
 
 """
 import torch
