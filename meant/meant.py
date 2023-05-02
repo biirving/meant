@@ -153,6 +153,9 @@ class meant(nn.Module):
 
         self.projection = nn.ModuleList([nn.LayerNorm(3840), nn.Linear(3840, 2304)])
 
+        # we have a classtoken for the temporal input
+        self.classtkn = nn.Parameter(torch.randn(1, image_dim))
+
     def forward(self, tweets, images, prices):
         # how to embed multiple days worth of information?
         words = tweets

@@ -30,13 +30,14 @@ class temporal(nn.Module):
         self.v = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         
+        
     # batch, lag, vector
     def forward(self, input):
         # q, k, v matrices
         # the queries should attend to one another.
         # the key difference with this mechanism is that the attention component focuses primarily on the target day.
         # so we should generate queries for the target day only
-        print(input.shape)
+        print('temporal input', input.shape)
         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
 
