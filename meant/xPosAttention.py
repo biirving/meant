@@ -35,16 +35,20 @@ class xPosAttention(nn.Module):
     def forward(self, input):
         #print(input.shape)
         #print(self.Dh * self.num_heads)
-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b s (h d) -> b h s d', h = self.num_heads), 
+        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l s (h d) -> b l h s d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
         #print(q_mat.shape)
         #q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
         q_mat = self.xPos.rotate_queries_or_keys(q_mat)
         k_mat = self.xPos.rotate_queries_or_keys(k_mat)
+
+        print(q_mat.shape)
+        print(k_mat.shape)
         
         # Compute attention scores using dot product of queries and keys
-        scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
+        scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
        # print('scores', scores)
+
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
         def applyMask(scores):
@@ -63,7 +67,7 @@ class xPosAttention(nn.Module):
         inter = torch.matmul(weights, v_mat)
 
         # reshape for the linear layer
-        inter = rearrange(inter, 'b h s d -> b s (h d)')
+        inter = rearrange(inter, 'b l h s d -> b l s (h d)')
 
         output = self.multi_mad(inter)
         return output

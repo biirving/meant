@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from einops.layers.torch import Rearrange
-from einops import repeat
+from einops import repeat, rearrange
 from attention import attention
 from xPosAttention import xPosAttention
 from temporal import temporal
@@ -87,17 +87,20 @@ class temporalEncoder(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
         self.n = 196
-        self.temp_embeding = torch.randn(1, lag, self.n, dim)
+
+        self.temp_embeding = torch.randn(1, lag, dim)
         self.lag = lag
         self.temp_encode = nn.ModuleList([nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim), 
                                             temporal(num_heads, dim), 
                                             nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim)])
+        #self.clsstoken = nn.Parameter()
                     
     def forward(self, input):
-        b, l, n, _ = input.shape
-        input += self.temp_embeding[:, :(n + 1)]
+        b, l, d = input.shape
+        print(self.temp_embeding.shape)
+        input += self.temp_embeding
         for encode in self.temp_encode:
             input = encode(input)
         return input
@@ -129,7 +132,7 @@ class meant(nn.Module):
         self.n = int((height * width) / (patch_res ** 2))
 
         # pretrained language embedding from hugging face model
-        self.embedding = nn.ModuleList([embedding, nn.Linear(768, text_dim)])
+        self.embedding = nn.ModuleList([embedding, nn.Linear(1024, 768)])
 
         # classification token for the image component. Will be passed to the temporal attention mechanism
         #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
@@ -148,53 +151,46 @@ class meant(nn.Module):
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
 
-        self.temporal_encoding = temporalEncoder(image_dim, num_heads, lag)
+        self.temporal_encoding = temporalEncoder(150528, num_heads, lag)
         self.mlpHead = nn.ModuleList([nn.LayerNorm(image_dim), nn.Linear(image_dim, num_classes)])
 
-        self.projection = nn.ModuleList([nn.LayerNorm(3840), nn.Linear(3840, 2304)])
+        # image projection
+
+
+        # text projection
 
         # we have a classtoken for the temporal input
         self.classtkn = nn.Parameter(torch.randn(1, image_dim))
 
     def forward(self, tweets, images, prices):
-        # how to embed multiple days worth of information?
+
+        _batch = images.shape[0]
+
+        # embed multiple days of information with a forloop
         words = tweets
         for mod in self.embedding:
             words = mod(words)
-        image = self.patchEmbed(images)
-    
-        # encode the text input
+
+        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
-        
-        
-        # flatten the tensor into a dimension for projection
-        # the dimension of the text sequence length dimension will be 2 + lag
-        words = torch.flatten(words, start_dim = 1, end_dim = -1)
-        for proj in self.projection:
-            words = proj.forward(words)
-        
-        # then use the repeat operation? But we then lose the temporal relevance 
-        # of the tweet sequence, which is the important short term aspect of the model
-        words = words.view(3, 3, 1, 768)
-        words = words.repeat((1, 1, 196, 1))
 
-        # encode the image input
+        image = self.patchEmbed(images)
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
+
+        # flatten the word and image inputs for concatenation
+        words = torch.flatten(words, start_dim = 2, end_dim = -1)
+        image = torch.flatten(image, start_dim = 2, end_dim = -1)
 
         # so how are we going to deal with batch size
         # lag period, sequence length, sequence dim
         print('words', words.shape)
-        # we could have some sort of projection into higher dimensionality
-
-
-        # batch 
-        # should we use a classification head here?
         print('image', image.shape)
 
         # lets bring this temporal attention home
-        temporal_input = torch.cat((words, image))
+        # maybe these should be projected into a more managable state before being fed to an attention architecture
+        temporal_input = torch.cat((words, image), dim = 2)
 
         # where concatenation happens?
         output = self.temporal_encoding(image)

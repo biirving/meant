@@ -38,7 +38,7 @@ class temporal(nn.Module):
         # the key difference with this mechanism is that the attention component focuses primarily on the target day.
         # so we should generate queries for the target day only
         print('temporal input', input.shape)
-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
+        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l (h d) -> b l h d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
 
         # Compute attention scores using dot product of queries and keys
@@ -58,6 +58,6 @@ class temporal(nn.Module):
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
         # reshape for the linear layer
-        inter = rearrange(inter, 'b l h n d -> b l n (h d)')
+        inter = rearrange(inter, 'b l h d -> b l (h d)')
         output = self.multi_mad(inter)
         return output
