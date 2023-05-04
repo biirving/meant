@@ -95,7 +95,7 @@ class temporalEncoder(nn.Module):
                                             temporal(num_heads, dim), 
                                             nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim)])
-        #self.clsstoken = nn.Parameter()
+
                     
     def forward(self, input):
         b, l, d = input.shape
@@ -154,11 +154,6 @@ class meant(nn.Module):
         self.temporal_encoding = temporalEncoder(150528, num_heads, lag)
         self.mlpHead = nn.ModuleList([nn.LayerNorm(image_dim), nn.Linear(image_dim, num_classes)])
 
-        # image projection
-
-
-        # text projection
-
         # we have a classtoken for the temporal input
         self.classtkn = nn.Parameter(torch.randn(1, image_dim))
 
@@ -175,21 +170,21 @@ class meant(nn.Module):
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
 
+        print('words done')
+
         image = self.patchEmbed(images)
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
+
+        print('image done')
 
         # flatten the word and image inputs for concatenation
         words = torch.flatten(words, start_dim = 2, end_dim = -1)
         image = torch.flatten(image, start_dim = 2, end_dim = -1)
 
-        # so how are we going to deal with batch size
-        # lag period, sequence length, sequence dim
         print('words', words.shape)
         print('image', image.shape)
 
-        # lets bring this temporal attention home
-        # maybe these should be projected into a more managable state before being fed to an attention architecture
         temporal_input = torch.cat((words, image), dim = 2)
 
         # where concatenation happens?
@@ -197,6 +192,3 @@ class meant(nn.Module):
         for mod in self.mlpHead:
             output = mod(output)
         return output
-
-
-

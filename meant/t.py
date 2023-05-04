@@ -78,12 +78,12 @@ text_input = torch.cat((text, text2, text3, text4, text5, text6, text7, text8, t
 #text = torch.randn((1, 7)).int()
 
 # Measure the time taken to perform a forward pass
-start_time = time.time()
+#start_time = time.time()
 with torch.no_grad():
     what = new.forward(text_input.int(), image, price)
-end_time = time.time()
+#end_time = time.time()
 # Print the elapsed time
-print(f"Forward pass took {end_time - start_time:.4f} seconds")
+#print(f"Forward pass took {end_time - start_time:.4f} seconds")
 print(what.shape)
 
 
