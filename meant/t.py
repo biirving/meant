@@ -5,9 +5,11 @@ import torchvision.transforms as transforms
 import torch
 from transformers import AutoModel, AutoTokenizer
 import time
+from PIL import Image
 
-tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-large", return_tensors = "pt", use_fast=False)
-bertweet = AutoModel.from_pretrained("vinai/bertweet-large")
+
+bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base", use_fast=False)
 
 # is there a point to even having a text_dim?
 new = meant(768, 768, 4, 224, 224, 16, 3, 2, bertweet.embeddings)
@@ -15,7 +17,6 @@ new = meant(768, 768, 4, 224, 224, 16, 3, 2, bertweet.embeddings)
 # this is our long range encoding
 image = torch.randn((3, 3, 3, 224, 224))
 
-from PIL import Image
 
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -36,25 +37,16 @@ transform = transforms.Compose([
 #    
 # should we have the lag period contained within each text line?
 # so we have a single tweet from each day over the lag period?
+"""
 text = ["holy function apple is so", "dub", "hallo", "what", "stop", "stop the madness how does this work akjdhladshf aljsdhf ads asd "]
 text2 = ["apple sucked today", "dub", "fuck", "pattern", "p", "stop the madness how does this work"]
-# so each of these are groups of tweets over a lag period?
 text3 = ["apple was awesome today", "dub", "shite", "o", "whatas", "stop the madness how does this work"]
-
 text4 = ["holy function apple is so", "dub", "hallo", "what", "stop", "stop the madness how does this work akjdhladshf aljsdhf ads asd "]
 text5 = ["apple sucked today", "dub", "fuck", "pattern", "p", "stop the madness how does this work"]
-# so each of these are groups of tweets over a lag period?
 text6 = ["apple was awesome today", "dub", "shite", "o", "whatas", "stop the madness how does this work"]
-
 text7 = ["holy function apple is so", "dub", "hallo", "what", "stop", "stop the madness how does this work akjdhladshf aljsdhf ads asd "]
 text8 = ["apple sucked today", "dub", "fuck", "pattern", "p", "stop the madness how does this work"]
-# so each of these are groups of tweets over a lag period?
 text9 = ["apple was awesome today", "dub", "shite", "o", "whatas", "stop the madness how does this work"]
-
-
-#pract_encode = "OPTION WATCHLIST + CHARTS \ud83c\udfaf\ud83d\udcc8\n\n\ud83d\udecd $LULU | Calls &gt; 380.35 ; Puts &lt; 368.55\n\ud83d\udc65 $FB | Calls &gt; 225 ; Puts &lt; 219\n\ud83d\udcf1 $AAPL | Calls &gt; 172 ; Puts &lt; 168.92\n\ud83d\udcc8 $SPY | Calls &gt; 450.40 ; Puts &lt; 443.50\n\n75 LIKES FOR A BONUS PLAY \u2705 https:\/\/t.co\/Br2blT8tLK"
-#print('pract', torch.tensor([tokenizer.encode([pract_encode])]))
-
 text = torch.tensor([tokenizer.encode(text)])
 text2 = torch.tensor([tokenizer.encode(text2)])
 text3 = torch.tensor([tokenizer.encode(text3)])
@@ -64,28 +56,11 @@ text6 = torch.tensor([tokenizer.encode(text6)])
 text7 = torch.tensor([tokenizer.encode(text7)])
 text8 = torch.tensor([tokenizer.encode(text8)])
 text9 = torch.tensor([tokenizer.encode(text9)])
-
 price = torch.randn((3, 3, 196, 4))
-#print('text shape', text.shape)
-#print('text shape', text2.shape)
 text_input = torch.cat((text, text2, text3, text4, text5, text6, text7, text8, text9), dim = 0)
-#print(text_input)
-#print('close', text_input.shape)
-#text_inptu = torch.randn(3, 3, )
-#print(bertweet.forward(text_input))
-
-#text_input = torch.randn((3, 5))
-#text = torch.randn((1, 7)).int()
-
-# Measure the time taken to perform a forward pass
-#start_time = time.time()
-with torch.no_grad():
-    what = new.forward(text_input.int(), image, price)
-#end_time = time.time()
-# Print the elapsed time
-#print(f"Forward pass took {end_time - start_time:.4f} seconds")
+what = new.forward(text_input.int(), image, price)
 print(what.shape)
-
+"""
 
 """
 import torch

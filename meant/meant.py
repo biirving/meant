@@ -185,7 +185,8 @@ class meant(nn.Module):
         print('words', words.shape)
         print('image', image.shape)
 
-        temporal_input = torch.cat((words, image), dim = 2)
+        # we feed the prices directly into the temporal input (will they make a difference?)
+        temporal_input = torch.cat((words, image, prices), dim = 2)
 
         # where concatenation happens?
         output = self.temporal_encoding(image)
