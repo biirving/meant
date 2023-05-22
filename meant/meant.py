@@ -9,6 +9,9 @@ from rotary_embedding_torch import RotaryEmbedding
 import math
 from transformers import AutoModel, AutoTokenizer
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# okay, lets run these experiments
 # because
 MAX_SEQ_LENGTH = 3333
 
@@ -45,6 +48,7 @@ class visionEncoder(nn.Module):
         return inter + final_resid
 
 # separate encoder module, because might make changes to structure
+# should we have temporal encoding baked into each encoder?
 class languageEncoder(nn.Module):
     def __init__(self, dim, num_heads):
         """
@@ -58,7 +62,7 @@ class languageEncoder(nn.Module):
         # so, the xPos embeddings will focus on the pixel case
         self.xPos = RotaryEmbedding(
             dim = 48,
-            #use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
+            use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
             #xpos_scale_base=2
         )
 
@@ -88,26 +92,31 @@ class temporalEncoder(nn.Module):
         self.num_heads = num_heads
         self.n = 196
 
-        self.temp_embeding = torch.randn(1, lag, dim)
+        # this is the positional embedding for the temporal encoder
+        self.temp_embedding = nn.Parameter(torch.randn(1, lag, dim))
         self.lag = lag
-        self.temp_encode = nn.ModuleList([nn.LayerNorm(dim), 
-                                            nn.Linear(dim, dim), 
-                                            temporal(num_heads, dim), 
-                                            nn.LayerNorm(dim), 
-                                            nn.Linear(dim, dim)])
+        self.temp_encode = nn.ModuleList([#nn.LayerNorm(dim), 
+                                            nn.Linear(dim, dim).float(), 
+                                            temporal(num_heads, dim).float(), 
+                                            #nn.LayerNorm(dim), 
+                                            nn.Linear(dim, dim).float()])
 
-                    
-    def forward(self, input):
-        b, l, d = input.shape
-        print(self.temp_embeding.shape)
-        input += self.temp_embeding
-        for encode in self.temp_encode:
-            input = encode(input)
-        return input
+    def forward(self, x):
+        b, l, d = x.shape
+        temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
+        x += temp_embed
+       # x = x.double()
+        count = 0
+        for mod in self.temp_encode:
+            #print(x.dtype)
+            #print(count)            
+            x = mod(x)
+            count+=1
+        return x
 
 
 class meant(nn.Module):
-    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=3):
+    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -132,7 +141,7 @@ class meant(nn.Module):
         self.n = int((height * width) / (patch_res ** 2))
 
         # pretrained language embedding from hugging face model
-        self.embedding = nn.ModuleList([embedding, nn.Linear(1024, 768)])
+        self.embedding = nn.ModuleList([embedding])
 
         # classification token for the image component. Will be passed to the temporal attention mechanism
         #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
@@ -151,14 +160,22 @@ class meant(nn.Module):
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
 
-        self.temporal_encoding = temporalEncoder(150528, num_heads, lag)
-        self.mlpHead = nn.ModuleList([nn.LayerNorm(image_dim), nn.Linear(image_dim, num_classes)])
+        # why is this fucked up
+        self.temporal_encoding = nn.ModuleList([temporalEncoder(1540, num_heads, lag)])
 
-        # we have a classtoken for the temporal input
-        self.classtkn = nn.Parameter(torch.randn(1, image_dim))
+        # output head
+        self.mlpHead = nn.ModuleList([nn.LayerNorm(1540), nn.Linear(1540, num_classes), nn.Sigmoid()])
+
+        # each component has a class token
+        self.img_classtkn = nn.Parameter(torch.randn(1, lag, 1, image_dim))
+
+        # how does this work with the lag period
+        self.txt_classtkn = nn.Parameter(torch.randn(1, lag, 1, text_dim))
+
+        # haven't decided on this dimensionality as of yet
+        #self.temp_classtkn = nn.Parameter(torch.randn(1, image_dim))
 
     def forward(self, tweets, images, prices):
-
         _batch = images.shape[0]
 
         # embed multiple days of information with a forloop
@@ -167,29 +184,27 @@ class meant(nn.Module):
             words = mod(words)
 
         words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+        txt_classtkn = repeat(self.txt_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
+        words = torch.cat((txt_classtkn, words), dim = 2)
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
 
-        print('words done')
-
         image = self.patchEmbed(images)
+
+        img_classtkn = repeat(self.img_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
+        image = torch.cat((img_classtkn, image), dim = 2)
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
 
-        print('image done')
-
-        # flatten the word and image inputs for concatenation
-        words = torch.flatten(words, start_dim = 2, end_dim = -1)
-        image = torch.flatten(image, start_dim = 2, end_dim = -1)
-
-        print('words', words.shape)
-        print('image', image.shape)
-
-        # we feed the prices directly into the temporal input (will they make a difference?)
-        temporal_input = torch.cat((words, image, prices), dim = 2)
-
-        # where concatenation happens?
-        output = self.temporal_encoding(image)
+        
+        # then we take the class tokens from both encoders
+        temporal_input = torch.cat((words[:, :, 0, :], image[:, :, 0, :], prices), dim = 2)
+        temporal_input = temporal_input.to(torch.float32)
+        # we process the concatenated classification tokens
+        #output = self.temporal_encoding(temporal_input).view(_batch, 1541)
+        for encoder in self.temporal_encoding:
+            output = encoder.forward(temporal_input)
+        # we process temporal output
         for mod in self.mlpHead:
             output = mod(output)
         return output
