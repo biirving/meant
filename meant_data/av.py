@@ -63,6 +63,3 @@ for name in sp500[0:]:
 
 progress = torch.tensor([count])
 torch.save(progress, 'progress.pt') 
-
-
-

@@ -5,7 +5,6 @@ from einops import repeat, rearrange
 from attention import attention
 from xPosAttention import xPosAttention
 from temporal import temporal
-from dividedSpaceTimeAttention import dividedSpaceTimeAttention
 from rotary_embedding_torch import RotaryEmbedding
 import math
 from transformers import AutoModel, AutoTokenizer
@@ -84,8 +83,8 @@ class languageEncoder(nn.Module):
             inter = mod(inter)
         return inter + final_resid
 
-# how does this scale to deal with an arbitrary lag period
-# lets make this multimodal temporal model, shall we?
+
+
 class temporalEncoder(nn.Module):
     def __init__(self, dim, num_heads, lag):
         super(temporalEncoder, self).__init__()
@@ -108,14 +107,16 @@ class temporalEncoder(nn.Module):
         x += temp_embed
        # x = x.double()
         count = 0
-        for mod in self.temp_encode:           
+        for mod in self.temp_encode:
+            #print(x.dtype)
+            #print(count)            
             x = mod(x)
             count+=1
         return x
 
 
 class meant(nn.Module):
-    def __init__(self, text_dim, image_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
+    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -131,7 +132,7 @@ class meant(nn.Module):
         super(meant, self).__init__()
         
         # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
-        self.dim = text_dim + image_dim
+        self.dim = text_dim + image_dim + price_dim
         self.num_heads = num_heads
 
         # for the image component of the encoder
@@ -151,13 +152,15 @@ class meant(nn.Module):
         # h = height
         # w = width
         # b = batch
-        # f = the number of frames we are processing
+        # l = lag period (how many images are being processed for each input)
         self.patchEmbed = nn.Sequential(
-            Rearrange('b f c (h p1) (w p2) -> b f (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+            Rearrange('b l c (h p1) (w p2) -> b l (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
             nn.Linear(self.patch_dim, image_dim),)
 
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
+
+        # why is this fucked up
         self.temporal_encoding = nn.ModuleList([temporalEncoder(1540, num_heads, lag)])
 
         # output head
@@ -193,8 +196,9 @@ class meant(nn.Module):
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
 
+        
         # then we take the class tokens from both encoders
-        temporal_input = torch.cat((words[:, :, 0, :], image[:, :, 0, :]), dim = 2)
+        temporal_input = torch.cat((words[:, :, 0, :], image[:, :, 0, :], prices), dim = 2)
         temporal_input = temporal_input.to(torch.float32)
         # we process the concatenated classification tokens
         #output = self.temporal_encoding(temporal_input).view(_batch, 1541)
@@ -204,4 +208,3 @@ class meant(nn.Module):
         for mod in self.mlpHead:
             output = mod(output)
         return output
-        
