@@ -20,6 +20,7 @@ from torchmetrics import Accuracy, MatthewsCorrCoef, AUROC
 import torchmetrics
 import string
 from transformers import AutoTokenizer, AutoModelForTokenClassification, AutoConfig, AutoModel
+from transformers.debug_utils import DebugUnderflowOverflow
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall
@@ -45,13 +46,13 @@ def str2bool(v):
 
 class metrics():
     def __init__(self, num_classes):
-        accuracy = Accuracy(task='multiclass', num_classes=num_classes)
-        f1_macro = MulticlassF1Score(num_classes=num_classes, average='macro')
-        f1_micro = MulticlassF1Score(num_classes=num_classes, average='micro')
-        precision_macro = MulticlassPrecision(num_classes=num_classes, average='macro')
-        precision_micro = MulticlassPrecision(num_classes=num_classes, average='micro')
-        recall_macro = MulticlassRecall(num_classes=num_classes, averafe='macro')
-        recall_micro = MulticlassRecall(num_classes=num_classes, average='micro')
+        self.accuracy = Accuracy(task='multiclass', num_classes=num_classes)
+        self.f1_macro = MulticlassF1Score(num_classes=num_classes, average='macro')
+        self.f1_micro = MulticlassF1Score(num_classes=num_classes, average='micro')
+        self.precision_macro = MulticlassPrecision(num_classes=num_classes, average='macro')
+        self.precision_micro = MulticlassPrecision(num_classes=num_classes, average='micro')
+        self.recall_macro = MulticlassRecall(num_classes=num_classes, average='macro')
+        self.recall_micro = MulticlassRecall(num_classes=num_classes, average='micro')
     
     def update(self, pred, target):
         self.accuracy.update(pred, target) 
@@ -70,7 +71,8 @@ class metrics():
         precision_micro = self.precision_micro.compute()
         recall_macro = self.precision_macro.compute()
         recall_micro = self.precision_micro.compute()
-        return acc, f1_macro, f1_micro, precision_macro, precision_micro, recall_macro, recall_micro
+        return (acc, f1_macro, f1_micro, precision_macro, 
+                precision_micro, recall_macro, recall_micro)
 
 
 # generalize training loop
@@ -113,12 +115,13 @@ class meant_trainer():
         self.debug_overflow = params['debug']
 
         # DATA
+        self.dataset = params['dataset']
         self.graphs_train = params['graphs_train']
         self.graphs_val = params['graphs_val']
         self.graphs_test = params['graphs_test']
         self.tweets_train = params['tweets_train']
         self.tweets_val = params['tweets_val']
-        self.tweets_train = params['tweets_train']
+        self.tweets_test = params['tweets_test']
         self.macds_train = params['macds_train']
         self.macds_val = params['macds_val']
         self.macds_test = params['macds_test']
@@ -170,9 +173,13 @@ class meant_trainer():
         # Display the plot
         plt.grid(True, linestyle='--', alpha=0.5)  # Add a grid
         plt.tight_layout()
-        plt.savefig(self.file_path + '/output_files/' + self.dataset + '/plots/' + 'train_f1_' + self.model_name + '_' + self.run_id + '_' + str(self.epoch) + '.png')
+        try:
+            plt.savefig(self.file_path + '/output_files/' + self.dataset + '/plots/' + 'train_f1_' + self.model_name + '_' + self.run_id + '_' + str(self.epoch) + '.png')
+        except FileNotFoundError:
+            print('Invalid filepath. Check that you have created the right folders.')
 
     def train(self):
+
         if(self.debug_overflow):
             debug_overflow = DebugUnderflowOverflow(self.model)
         self.model = self.model.to(torch.float64)
@@ -196,14 +203,14 @@ class meant_trainer():
             target_values = []
             train_metrics = metrics(self.num_classes) 
             train_f1_scores = []
-
+            print('Training model on epoch ' + str(self.epoch + ep))
             for train_index in tqdm(range(0, self.graphs_train.shape[0], self.train_batch_size)):
                 self.model.zero_grad()
                 out = model.forward(torch.from_numpy(self.tweets_train[train_index:train_index + self.train_batch_size]).long().to(device), 
-                        torch.from_numpy(self.graphs_train[train_index:train_index + self.train_batch_size]).long().to(device),
-                        torch.from_numpy(self.macds_train[train_index:train_index + self.train_batch_size]).long().to(device))
-                target = torch.from_numpy(self.macds).to(device)
-                loss = loss_fct(out, target)                
+                        torch.from_numpy(self.graphs_train[train_index:train_index + self.train_batch_size]).float().to(device),
+                        torch.from_numpy(self.macds_train[train_index:train_index + self.train_batch_size]).float().to(device))
+                target = torch.from_numpy(self.y_train[train_index:train_index + self.train_batch_size])
+                loss = loss_fct(out, target.to(device))                
                 self.optimizer.zero_grad() 
                 loss.backward()
                 self.optimizer.step()
@@ -240,10 +247,10 @@ class meant_trainer():
             val_loss = 0
             print('Evaluating Model...')
             with torch.no_grad():
-                for val_index in range(0, len(self.graphs_val.shape[0]), self.eval_batch_size):
-                    out = model.forward(torch.from_numpy(self.tweets_val[val_index:val_index + self.eval_batch_size]).to(device), 
-                        torch.from_numpy(self.graphs_val[val_index:val_index + self.eval_batch_size]).to(device),
-                        torch.from_numpy(self.macds_val[val_index:val_index + self.eval_batch_size]).to(device)).detach().cpu()
+                for val_index in range(0, self.graphs_val.shape[0], self.eval_batch_size):
+                    out = model.forward(torch.from_numpy(self.tweets_val[val_index:val_index + self.eval_batch_size]).long().to(device), 
+                        torch.from_numpy(self.graphs_val[val_index:val_index + self.eval_batch_size]).float().to(device),
+                        torch.from_numpy(self.macds_val[val_index:val_index + self.eval_batch_size]).float().to(device)).detach().cpu()
                     target = torch.from_numpy(self.y_val[val_index:val_index + self.eval_batch_size])
                     val_metrics.update(out, target) 
             (val_accuracy, 
@@ -263,20 +270,22 @@ class meant_trainer():
             print('Micro recall: ', val_recall_micro)
 
             if self.early_stopping:
-                if(val_f1 <= prev_f1):
+                if(val_f1_macro <= prev_f1):
                     patience += 1
                     if(patience == lost_patience):
                         print('Stopped at epoch ' + str(ep + 0))
                         break
                 else:
                     patience = 0
-                prev_f1 = val_f1
+                prev_f1 = val_f1_macro
 
-
-        torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
-        #torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + self.run_id + '_' + str(self.epoch + 1) + '.pt')
-        #torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
-        #torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
+        try:
+            torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
+            #torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + self.run_id + '_' + str(self.epoch + 1) + '.pt')
+            #torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
+            #torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
+        except FileNotFoundError:
+            print('Your filepath is invalid. Save has failed')
 
         
         if(self.test_model):
@@ -288,12 +297,14 @@ class meant_trainer():
             #i_final_input = self.tokenize_and_align_labels(self.test[0:0+self.test_batch_size])
             #self.model = torch.jit.trace(self.model, ('input_ids':x_final_input['input_ids'].to(device), 'attention_mask':x_final_input['attention_mask'].to(device)), strict=False)
             with torch.no_grad():
-                for test_index in range(0, len(self.graphs_test.shape[0]), self.test_batch_size):
-                    out = model.forward(torch.from_numpy(self.tweet_test[test_index:test_index + self.test_batch_size]).to(device), 
-                        torch.from_numpy(self.graphs_test[test_index:test_index + self.test_batch_size]).to(device),
-                        torch.from_numpy(self.macds_test[test_index:test_index + self.test_batch_size]).to(device)).detach().cpu()
+                for test_index in range(0, self.graphs_test.shape[0], self.test_batch_size):
+                    out = model.forward(torch.from_numpy(self.tweets_test[test_index:test_index + self.test_batch_size]).long().to(device), 
+                        torch.from_numpy(self.graphs_test[test_index:test_index + self.test_batch_size]).float().to(device),
+                        torch.from_numpy(self.macds_test[test_index:test_index + self.test_batch_size]).float().to(device))
                     target = torch.from_numpy(self.y_test[test_index:test_index + self.test_batch_size])
-                    test_metrics.update(out, target) 
+                    test_metrics.update(out.detach().cpu(), target) 
+
+            
             (test_accuracy, 
             test_f1_macro, 
             test_f1_micro, 
@@ -332,17 +343,17 @@ if __name__=='__main__':
 
     # Training loop 
     parser.add_argument('-e', '--epoch', type = int, help = 'Current epoch at start of training', default=0)
-    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=30)
+    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=1)
     parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=True, default=True)
     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
-    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 1)
+    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 3)
     parser.add_argument('-eb', '--eval_batch_size',type=int, help='Batch size for evaluation step', default=1)
     parser.add_argument('-tesb', '--test_batch_size',type=int, help='Batch size for test step', default=1)
     parser.add_argument('-testm', '--test_model', type=str2bool, help='Whether or not to test our model', nargs='?', const=True, default=True)
 
     # Model specific
     parser.add_argument('-mn', '--model_name', type=str, help='Model name', default='meant')
-    parser.add_argument('-nc', '--num_classes', type= int, help='Number of classes', default = 9)
+    parser.add_argument('-nc', '--num_classes', type= int, help='Number of classes', default = 2)
     parser.add_argument('-t', '--task', type = str, help = 'Task type for training loop', default = 'classification')
     parser.add_argument('-cl', '--cache_location', type = str, help = 'Location for HuggingFace files')
     parser.add_argument('-di', '--dimension', type=int, help = 'internal dimension', default = 128)
@@ -361,6 +372,7 @@ if __name__=='__main__':
     parser.add_argument('-fp', '--file_path', type=str, help='Path to files', default='/work/nlp/b.irving/meant_runs')
     parser.add_argument('-rid', '--run_id', type=str, help='Run identification number', required=True)
     parser.add_argument('-lag', '--lag', type=int, help='Lag period for data', default=5)
+    parser.add_argument('-norm', '--normalize', type=str2bool, help='Whether or not to normalize the data', nargs='?', const=False, default=False)
     args = parser.parse_args()
 
     t0 = time.time()
@@ -375,7 +387,7 @@ if __name__=='__main__':
                 config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
                 model = AutoModelForTokenClassification.from_config(config).to(device)
         elif args.model_name == 'meant':
-            bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+            bertweet = AutoModel.from_pretrained("vinai/bertweet-base").to(torch.float32)
             model = meant(text_dim = 768, 
                 image_dim = 768, 
                 price_dim = 4, 
@@ -384,7 +396,7 @@ if __name__=='__main__':
                 patch_res = 16, 
                 lag = args.lag, 
                 num_classes = args.num_classes, 
-                embedding = bertweet.embeddings.double())
+                embedding = bertweet.embeddings).to(torch.float32)
         else:
             raise ValueError('Pass a valid model name.')
     else:
@@ -421,11 +433,17 @@ if __name__=='__main__':
         lr_scheduler.load_state_dict(lr_scheduler_state_dict, start_factor=0.1)
 
     print('Loading data...')
-    """
+    
     graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
     tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy')
     macds = np.load('/work/nlp/b.irving/stock/complete/macds_5.npy')
     labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')  
+
+    # Simple normalization on data
+    if(args.normalize):
+        graphs = (graphs - np.mean(graphs)) / np.std(graphs)
+        tweets = (tweets - np.mean(tweets)) / np.std(tweets)
+        macds = (macds - np.mean(macds)) / np.std(macds)
 
     # First split: Separate out the test set
     graphs_train_val, graphs_test, tweets_train_val, tweets_test, macds_train_val, macds_test, y_train_val, y_test = train_test_split(
@@ -435,23 +453,12 @@ if __name__=='__main__':
     graphs_train, graphs_val, tweets_train, tweets_val, macds_train, macds_val, y_train, y_val= train_test_split(
         graphs_train_val, tweets_train_val, macds_train_val, y_train_val, test_size=0.25, random_state=42) 
 
-
-    # saving for debugging
-    np.save('graphs_sample.npy', graphs_train[0:100])
-    np.save('tweets_sample.npy', tweets_train[0:100])
-    np.save('macd_sample.npy', macds_train[0:100])
-    np.save('labels_sample.npy', labels[0:100])
-    """
-
-    graphs = np.load('graphs_sample.npy')
-    tweets = np.load('tweets_sample.npy')
-    macds = np.load('macd_sample.npy')
-    y = np.load('labels_sample.npy')
-
     print('Data loaded.')
-    # normalize the data (compare this in runs as well)
-    # lets see if we can train our transformer at allu
-    """
+
+    params = {
+
+            # DATA
+            'dataset':'stocknet', 
             'graphs_train':graphs_train,
             'graphs_val':graphs_val,
             'graphs_test':graphs_test,
@@ -464,27 +471,6 @@ if __name__=='__main__':
             'y_train':y_train,
             'y_val':y_val,
             'y_test':y_test,
-    """ 
-    params = {
-
-            # DATA
-            'dataset':'stocknet', 
-
-            # for debugging
-            'graphs_train':graphs,
-            'graphs_val':graphs,
-            'graphs_test':graphs,
-            'tweets_train':tweets,
-            'tweets_val':tweets,
-            'tweets_test':tweets,
-            'macds_train':macds,
-            'macds_val':macds,
-            'macds_test':macds,
-            'y_train':y,
-            'y_val':y,
-            'y_test':y,
-
-
             'test_model':args.test_model,
 
             'stoppage':args.stoppage,
@@ -518,4 +504,3 @@ if __name__=='__main__':
     train = meant_trainer(params)
     train.train()
     print('Done in ' +  str(time.time() - t0) + ' seconds.')
-

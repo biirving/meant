@@ -2,11 +2,10 @@ import torch
 from torch import nn
 from einops.layers.torch import Rearrange
 from einops import repeat, rearrange
-from attention import attention
-from xPosAttention import xPosAttention
-from temporal import temporal
-from dividedSpaceTimeAttention import dividedSpaceTimeAttention
-from rotary_embedding_torch import RotaryEmbedding
+from .attention import attention
+from .xPosAttention import xPosAttention
+from .temporal import temporal
+from .rotary_embedding_torch import RotaryEmbedding
 import math
 from transformers import AutoModel, AutoTokenizer
 
@@ -97,16 +96,18 @@ class temporalEncoder(nn.Module):
         self.temp_embedding = nn.Parameter(torch.randn(1, lag, dim))
         self.lag = lag
         self.temp_encode = nn.ModuleList([#nn.LayerNorm(dim), 
-                                            nn.Linear(dim, dim).float(), 
-                                            temporal(num_heads, dim).float(), 
+                                            nn.Linear(dim, dim), 
+                                            temporal(num_heads, dim), 
                                             #nn.LayerNorm(dim), 
-                                            nn.Linear(dim, dim).float()])
+                                            nn.Linear(dim, dim)])
+        self.temp_encode = self.temp_encode.to(torch.float32)
+        
 
     def forward(self, x):
         b, l, d = x.shape
         temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
         x += temp_embed
-       # x = x.double()
+        x = x.double()
         count = 0
         for mod in self.temp_encode:           
             x = mod(x)
@@ -115,7 +116,7 @@ class temporalEncoder(nn.Module):
 
 
 class meant(nn.Module):
-    def __init__(self, text_dim, image_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
+    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -131,7 +132,7 @@ class meant(nn.Module):
         super(meant, self).__init__()
         
         # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
-        self.dim = text_dim + image_dim
+        self.dim = text_dim + image_dim + price_dim
         self.num_heads = num_heads
 
         # for the image component of the encoder
@@ -154,14 +155,15 @@ class meant(nn.Module):
         # f = the number of frames we are processing
         self.patchEmbed = nn.Sequential(
             Rearrange('b f c (h p1) (w p2) -> b f (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
-            nn.Linear(self.patch_dim, image_dim),)
+            nn.Linear(self.patch_dim, image_dim, dtype=torch.float32),)
 
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
-        self.temporal_encoding = nn.ModuleList([temporalEncoder(1540, num_heads, lag)])
+
+        self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)]).to(torch.float32)
 
         # output head
-        self.mlpHead = nn.ModuleList([nn.LayerNorm(1540), nn.Linear(1540, num_classes), nn.Sigmoid()])
+        self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
 
         # each component has a class token
         self.img_classtkn = nn.Parameter(torch.randn(1, lag, 1, image_dim))
@@ -175,10 +177,14 @@ class meant(nn.Module):
     def forward(self, tweets, images, prices):
         _batch = images.shape[0]
 
-        # embed multiple days of information with a forloop
         words = tweets
-        for mod in self.embedding:
-            words = mod(words)
+        embedded = []
+        for word in words:
+            for mod in self.embedding:
+                word = mod(word)
+            embedded.append(word)
+        words = torch.concat(embedded, dim=0)
+            
 
         words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
         txt_classtkn = repeat(self.txt_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
@@ -186,7 +192,8 @@ class meant(nn.Module):
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
 
-        image = self.patchEmbed(images)
+        # the datatype correction depends on the system?
+        image = self.patchEmbed(images.double())
 
         img_classtkn = repeat(self.img_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
         image = torch.cat((img_classtkn, image), dim = 2)
@@ -194,14 +201,12 @@ class meant(nn.Module):
             image = encoder.forward(image)
 
         # then we take the class tokens from both encoders
-        temporal_input = torch.cat((words[:, :, 0, :], image[:, :, 0, :]), dim = 2)
-        temporal_input = temporal_input.to(torch.float32)
-        # we process the concatenated classification tokens
-        #output = self.temporal_encoding(temporal_input).view(_batch, 1541)
+        temporal_input = torch.cat((words[:, :, 0, :], image[:, :, 0, :], prices), dim = 2)
+        temporal = temporal_input.to(torch.float32)
+
         for encoder in self.temporal_encoding:
-            output = encoder.forward(temporal_input)
+            temporal = encoder.forward(temporal)
         # we process temporal output
         for mod in self.mlpHead:
-            output = mod(output)
-        return output
-        
+            temporal = mod(temporal)
+        return temporal.squeeze(dim=1)        
