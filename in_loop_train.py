@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import math
+import gc
 
 #nightly pytorch version required
 #import torch._dynamo as dynamo
@@ -26,12 +27,20 @@ from torch.nn.utils.rnn import pad_sequence
 from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall
 import re
 sys.path.append('../meant')
-from meant import meant
+from meant import meant, meant_vision
+from joblib import Memory
+import wandb
+from torch.utils.data import DataLoader, TensorDataset, Dataset
 
 
 torch.cuda.empty_cache()
 torch.manual_seed(42)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+np_dtype = np.float32
+
+# torch datatype to used for automatic mixed precision training
+torch_dtype = torch.float16
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -45,7 +54,7 @@ def str2bool(v):
 
 
 class metrics():
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, set_name):
         self.accuracy = Accuracy(task='multiclass', num_classes=num_classes)
         self.f1_macro = MulticlassF1Score(num_classes=num_classes, average='macro')
         self.f1_micro = MulticlassF1Score(num_classes=num_classes, average='micro')
@@ -74,6 +83,36 @@ class metrics():
         return (acc, f1_macro, f1_micro, precision_macro, 
                 precision_micro, recall_macro, recall_micro)
 
+    def show(self):
+        (accuracy, 
+        f1_macro, 
+        f1_micro, 
+        precision_macro, 
+        precision_micro, 
+        recall_macro, 
+        recall_micro) = self.compute()
+        print(self.set_name + ' accuracy: ', accuracy)
+        print('Macro ' + self.set_name + ' f1: ', f1_macro)
+        print('Micro ' + self.set_name + ' f1: ', f1_micro)
+        print('Macro ' + self.set_name + ' precision: ', precision_macro)
+        print('Micro ' + self.set_name + ' precision: ', precision_micro)
+        print('Macro ' + self.set_name + ' recall: ', recall_macro)
+        print('Micro ' + self.set_name + ' recall: ', recall_micro)
+        
+
+# simple class to help load the dataset
+class customDataset(Dataset):
+    def __init__(self, graphs, tweets, macds, labels):
+        self.graphs = torch.tensor(graphs)
+        self.tweets = torch.tensor(tweets)
+        self.macds = torch.tensor(macds)
+        self.labels = torch.tensor(labels)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        return self.graphs[idx], self.tweets[idx], self.macds[idx], self.labels[idx]
 
 # generalize training loop
 
@@ -116,18 +155,9 @@ class meant_trainer():
 
         # DATA
         self.dataset = params['dataset']
-        self.graphs_train = params['graphs_train']
-        self.graphs_val = params['graphs_val']
-        self.graphs_test = params['graphs_test']
-        self.tweets_train = params['tweets_train']
-        self.tweets_val = params['tweets_val']
-        self.tweets_test = params['tweets_test']
-        self.macds_train = params['macds_train']
-        self.macds_val = params['macds_val']
-        self.macds_test = params['macds_test']
-        self.y_train = params['y_train']
-        self.y_val = params['y_val']
-        self.y_test = params['y_test']
+        self.train_loader = params['train_loader']
+        self.val_loader = params['val_loader']
+        self.test_loader = params['test_loader']
         self.test_model = params['test_model']
 
         # model specific         
@@ -137,6 +167,7 @@ class meant_trainer():
         self.dropout = params['dropout']
         self.pretrained_model = params['pretrained_model']
         self.num_classes = params['classes']
+        self.num_encoders = params['num_encoders']
 
         self.lr_scheduler = params['lr_scheduler']
         self.tokenizer = params['tokenizer']
@@ -182,7 +213,6 @@ class meant_trainer():
 
         if(self.debug_overflow):
             debug_overflow = DebugUnderflowOverflow(self.model)
-        self.model = self.model.to(torch.float64)
         loss_fct = nn.CrossEntropyLoss()
         t0 = time.time()
         training_loss = []
@@ -197,77 +227,69 @@ class meant_trainer():
         patience = 0
         prev_f1 = float('inf')
 
+        scaler = torch.cuda.amp.GradScaler()
+
+
         for ep in range(self.num_epochs):
             final_epoch = ep
             predictions = []
             target_values = []
-            train_metrics = metrics(self.num_classes) 
+            train_metrics = metrics(self.num_classes, 'train') 
             train_f1_scores = []
             print('Training model on epoch ' + str(self.epoch + ep))
-            for train_index in tqdm(range(0, self.graphs_train.shape[0], self.train_batch_size)):
-                self.model.zero_grad()
-                out = model.forward(torch.from_numpy(self.tweets_train[train_index:train_index + self.train_batch_size]).long().to(device), 
-                        torch.from_numpy(self.graphs_train[train_index:train_index + self.train_batch_size]).float().to(device),
-                        torch.from_numpy(self.macds_train[train_index:train_index + self.train_batch_size]).float().to(device))
-                target = torch.from_numpy(self.y_train[train_index:train_index + self.train_batch_size])
-                loss = loss_fct(out, target.to(device))                
+
+            # randomization on each epoch
+            indices = np.arange(self.graphs_train.shape[0])
+            np.random.shuffle(indices) 
+            self.graphs_train = self.graphs_train[indices]
+            self.tweets_train = self.tweets_train[indices]
+            self.macds_train = self.macds_train[indices]
+
+            for graphs, tweets, macds, target in self.train_loader:
                 self.optimizer.zero_grad() 
-                loss.backward()
-                self.optimizer.step()
+                with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                    out = model.forward(tweets.to(device), graphs.to(device))
+                    print('output', out)
+                    print('target', target)
+                    loss = loss_fct(out, target.to(device).long())                
+                    print(loss)
+
+                scaler.scale(loss).backward()
+                scaler.step(self.optimizer)
+                scaler.update()
 
                 out = out.detach().cpu()
                 target = target.detach().cpu()
                 train_metrics.update(out, target) 
 
+                if torch.isnan(loss).any() or torch.isnan(out).any():
+                    raise ValueError('Nans encountered. Training failure')
+                    sys.exit()
 
+                # clean up memory
+                del out
+                del target
                 if(train_index % 10000 == 0):
                     print('loss: ',  loss.item())
+                del loss
+
             print('length: ', str(time.time() - t0))
             print('loss total: ', sum(training_loss))
 
-            (train_accuracy, 
-            train_f1_macro, 
-            train_f1_micro, 
-            train_precision_macro, 
-            train_precision_micro, 
-            train_recall_macro, 
-            train_recall_micro) = train_metrics.compute()
-            print('training accuracy: ', train_accuracy)
-            print('Macro training f1: ', train_f1_macro)
-            print('Micro training f1: ', train_f1_micro)
-            print('Macro precision: ', train_precision_macro)
-            print('Micro precision: ', train_precision_micro)
-            print('Macro recall: ', train_recall_macro)
-            print('Micro recall: ', train_recall_micro)
+            self.train_metrics.show() 
 
             #self.f1_plot(np.array(train_f1_scores))
             self.lr_scheduler.step()
-            val_metrics = metrics(self.num_classes) 
+            val_metrics = metrics(self.num_classes, 'validation') 
             self.model.eval()
             val_loss = 0
             print('Evaluating Model...')
             with torch.no_grad():
-                for val_index in range(0, self.graphs_val.shape[0], self.eval_batch_size):
-                    out = model.forward(torch.from_numpy(self.tweets_val[val_index:val_index + self.eval_batch_size]).long().to(device), 
-                        torch.from_numpy(self.graphs_val[val_index:val_index + self.eval_batch_size]).float().to(device),
-                        torch.from_numpy(self.macds_val[val_index:val_index + self.eval_batch_size]).float().to(device)).detach().cpu()
-                    target = torch.from_numpy(self.y_val[val_index:val_index + self.eval_batch_size])
+                for graphs, tweets, macds, target in self.val_loader:
+                    out = model.forward(tweets.to(device), graphs.to(device))
                     val_metrics.update(out, target) 
-            (val_accuracy, 
-            val_f1_macro, 
-            val_f1_micro, 
-            val_precision_macro, 
-            val_precision_micro, 
-            val_recall_macro, 
-            val_recall_micro) = train_metrics.compute()
 
-            print('Validation accuracy: ', val_accuracy)
-            print('Macro validation f1: ', val_f1_macro)
-            print('Micro validation f1: ', val_f1_micro)
-            print('Macro precision: ', val_precision_macro)
-            print('Micro precision: ', val_precision_micro)
-            print('Macro recall: ', val_recall_macro)
-            print('Micro recall: ', val_recall_micro)
+            self.val_metrics.show() 
 
             if self.early_stopping:
                 if(val_f1_macro <= prev_f1):
@@ -280,45 +302,28 @@ class meant_trainer():
                 prev_f1 = val_f1_macro
 
         try:
-            torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
-            #torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + self.run_id + '_' + str(self.epoch + 1) + '.pt')
-            #torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
-            #torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
+            torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
+            torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
+            torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
         except FileNotFoundError:
             print('Your filepath is invalid. Save has failed')
 
         
         if(self.test_model):
             print('Testing...') 
-            test_metrics = metrics(self.num_classes) 
+            test_metrics = metrics(self.num_classes, 'test') 
             self.model.eval()
             f1_scores = []
             accuracy = Accuracy(task='multiclass', num_classes=self.num_classes).to(device)
             #i_final_input = self.tokenize_and_align_labels(self.test[0:0+self.test_batch_size])
             #self.model = torch.jit.trace(self.model, ('input_ids':x_final_input['input_ids'].to(device), 'attention_mask':x_final_input['attention_mask'].to(device)), strict=False)
             with torch.no_grad():
-                for test_index in range(0, self.graphs_test.shape[0], self.test_batch_size):
-                    out = model.forward(torch.from_numpy(self.tweets_test[test_index:test_index + self.test_batch_size]).long().to(device), 
-                        torch.from_numpy(self.graphs_test[test_index:test_index + self.test_batch_size]).float().to(device),
-                        torch.from_numpy(self.macds_test[test_index:test_index + self.test_batch_size]).float().to(device))
-                    target = torch.from_numpy(self.y_test[test_index:test_index + self.test_batch_size])
+                for graphs, tweets, macds, target in self.test_loader:
+                    out = model.forward(tweets.to(device), graphs.to(device))
                     test_metrics.update(out.detach().cpu(), target) 
 
             
-            (test_accuracy, 
-            test_f1_macro, 
-            test_f1_micro, 
-            test_precision_macro, 
-            test_precision_micro, 
-            test_recall_macro, 
-            test_recall_micro) = train_metrics.compute()
-            print('Test accuracy: ', test_accuracy)
-            print('Macro test f1: ', test_f1_macro)
-            print('Micro test f1: ', test_f1_micro)
-            print('Macro precision: ', test_precision_macro)
-            print('Micro precision: ', test_precision_micro)
-            print('Macro recall: ', test_recall_macro)
-            print('Micro recall: ', test_recall_micro)   
+            self.test_metrics.show()  
             self.f1_plot(np.array(f1_scores))
 
 
@@ -344,9 +349,9 @@ if __name__=='__main__':
     # Training loop 
     parser.add_argument('-e', '--epoch', type = int, help = 'Current epoch at start of training', default=0)
     parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=1)
-    parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=True, default=True)
+    parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=False, default=False)
     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
-    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 3)
+    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 8)
     parser.add_argument('-eb', '--eval_batch_size',type=int, help='Batch size for evaluation step', default=1)
     parser.add_argument('-tesb', '--test_batch_size',type=int, help='Batch size for test step', default=1)
     parser.add_argument('-testm', '--test_model', type=str2bool, help='Whether or not to test our model', nargs='?', const=True, default=True)
@@ -361,6 +366,9 @@ if __name__=='__main__':
     parser.add_argument('-do', '--dropout', type=float, help='Dropout in our model', default=0.0)
     parser.add_argument('-ptm', '--pretrained_model', type=str, help='Path to model', default=None)
     parser.add_argument('-p', '--pretrained', type = str, help='Load pretrained model if True. Train from scratch if false',default=True)
+    parser.add_argument('-nec', '--num_encoders', type=int, help='The number of encoders in our model', default=12)
+    parser.add_argument('-img', '--image_only', type=str2bool, help='Is our task image only or not', nargs='?', const=False, default=False)
+    parser.add_argument('-lang', '--language_only', type=str2bool, help='Is our task language only or not', nargs='?', const=False, default=False)
 
     # hugging face
     parser.add_argument('-hf', '--hugging_face_model', type=str, help='If we want to finetune/pretrain a model from Hugging face.', default=None)
@@ -387,7 +395,8 @@ if __name__=='__main__':
                 config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
                 model = AutoModelForTokenClassification.from_config(config).to(device)
         elif args.model_name == 'meant':
-            bertweet = AutoModel.from_pretrained("vinai/bertweet-base").to(torch.float32)
+            # do we need the embedding layer if we have already used the flair nlp embeddings?
+            bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
             model = meant(text_dim = 768, 
                 image_dim = 768, 
                 price_dim = 4, 
@@ -396,7 +405,20 @@ if __name__=='__main__':
                 patch_res = 16, 
                 lag = args.lag, 
                 num_classes = args.num_classes, 
-                embedding = bertweet.embeddings).to(torch.float32)
+                embedding = bertweet.embeddings,
+                num_encoders=args.num_encoders).to(device)
+        elif args.model_name == 'meant_vision':
+            bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+            model = meant_vision(text_dim = 768, 
+                image_dim = 768, 
+                price_dim = 4, 
+                height = 224, 
+                width = 224, 
+                patch_res = 16, 
+                lag = args.lag, 
+                num_classes = args.num_classes, 
+                embedding = bertweet.embeddings,
+                num_encoders=args.num_encoders).to(device)
         else:
             raise ValueError('Pass a valid model name.')
     else:
@@ -433,17 +455,33 @@ if __name__=='__main__':
         lr_scheduler.load_state_dict(lr_scheduler_state_dict, start_factor=0.1)
 
     print('Loading data...')
-    
-    graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
-    tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy')
-    macds = np.load('/work/nlp/b.irving/stock/complete/macds_5.npy')
-    labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')  
 
-    # Simple normalization on data
-    if(args.normalize):
-        graphs = (graphs - np.mean(graphs)) / np.std(graphs)
-        tweets = (tweets - np.mean(tweets)) / np.std(tweets)
-        macds = (macds - np.mean(macds)) / np.std(macds)
+    assert not (args.image_only == True and args.language_only == True), 'Cannot be an image only AND a language only task'
+
+    if args.image_only:
+        graphs = np.memmap('/work/nlp/b.irving/stock/complete/graphs_5.npy', dtype=np_dtype, mode='r')
+        tweets = np.ones(graphs.shape[0], 1).astype(np.float32)
+    elif args.language_only:
+        tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
+        graphs = np.ones(tweets.shape[0], 1).astype(np.float32)
+    else:
+        graphs = np.memmap('/work/nlp/b.irving/stock/complete/graphs_5.npy', dtype=np_dtype, mode='r')
+        tweets = np.memmap('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
+        macds = np.memmap('/work/nlp/b.irving/stock/complete/macds_5.npy', dtype=np_dtype, mode='r')
+        labels = np.memmap('/work/nlp/b.irving/stock/complete/y_resampled_5.npy', dtype=np_dtype, mode='r')
+
+    if args.normalize:
+        print('Normalizing data...')
+        # our memmap arrays are read-only
+        graphs -= np.mean(graphs)
+        graphs /= np.std(graphs)
+
+        tweets -= np.mean(tweets)
+        tweets /= np.std(tweets)
+
+        macds -= np.mean(macds)
+        macds /= np.std(macds)
+        print('Data normalized.')
 
     # First split: Separate out the test set
     graphs_train_val, graphs_test, tweets_train_val, tweets_test, macds_train_val, macds_test, y_train_val, y_test = train_test_split(
@@ -452,6 +490,31 @@ if __name__=='__main__':
     # Second split: Split the remaining data into training and validation sets
     graphs_train, graphs_val, tweets_train, tweets_val, macds_train, macds_val, y_train, y_val= train_test_split(
         graphs_train_val, tweets_train_val, macds_train_val, y_train_val, test_size=0.25, random_state=42) 
+    
+    # clear up memory
+    del graphs
+    del tweets
+    del macds
+    del labels
+    del macds_train_val
+    del y_train_val
+    del tweets_train_val
+    del graphs_train_val
+    # use here, because a signficant amount of memory can be reclaimed
+    gc.collect()
+    
+    # create a dataLoader object
+    train_dataset = customDataset(graphs_train, tweets_train, macds_train, y_train)
+    val_dataset = customDataset(graphs_val, tweets_val, macds_val, y_val)
+    test_dataset = customDataset(graphs_test, tweets_val, macds_test, y_test)
+
+    # pass these to our training loop
+    train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.eval_batch_size, shuffle=False, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, pin_memory=True)
+
+    del graphs_train, tweets_train, macds_train, graphs_val, tweets_train, macds_test
+    gc.collect()
 
     print('Data loaded.')
 
@@ -459,18 +522,9 @@ if __name__=='__main__':
 
             # DATA
             'dataset':'stocknet', 
-            'graphs_train':graphs_train,
-            'graphs_val':graphs_val,
-            'graphs_test':graphs_test,
-            'tweets_train':tweets_train,
-            'tweets_val':tweets_val,
-            'tweets_test':tweets_test,
-            'macds_train':macds_train,
-            'macds_val':macds_val,
-            'macds_test':macds_test,
-            'y_train':y_train,
-            'y_val':y_val,
-            'y_test':y_test,
+            'train_loader':train_loader, 
+            'val_loader':val_loader,
+            'test_loader':test_loader,
             'test_model':args.test_model,
 
             'stoppage':args.stoppage,
@@ -489,7 +543,7 @@ if __name__=='__main__':
             'train_batch_size': args.train_batch_size,
             'eval_batch_size':args.eval_batch_size,
             'test_batch_size':args.test_batch_size,
-            'model':model.to(device),
+            'model':model,
             'debug':args.debug,
             'dim':args.dimension,
             'dropout':args.dropout,
@@ -499,6 +553,7 @@ if __name__=='__main__':
             'classes':args.num_classes,
             'tokenizer':tokenizer,
             'model_name':args.model_name,
+            'num_encoders':args.num_encoders
     }
 
     train = meant_trainer(params)

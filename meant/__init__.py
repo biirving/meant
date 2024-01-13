@@ -1,5 +1,5 @@
 from .attention import attention
 from .meant import meant
-from .rotary_embedding_torch import RotaryEmbedding
+from .meant_vision import meant_vision
 from .xPosAttention import xPosAttention
 from .temporal import temporal

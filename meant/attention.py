@@ -3,7 +3,7 @@ from torch import nn
 from einops import rearrange
 import math
 import torch
-from rotary_embedding_torch import apply_rotary_emb, RotaryEmbedding, broadcat
+from rotary_embedding_torch import RotaryEmbedding
 
 """
 A classic attention mechanism with xPos embedding support.
@@ -20,7 +20,7 @@ class attention(nn.Module):
         self.Dh = int(self.dim/self.num_heads)
         self.dropout = nn.Dropout(droput)
         self.pos_emb = pos_emb
-        self.mask =mask
+        self.mask = mask
 
         self.softmax = nn.Softmax(dim = -1)
         # The matrix which multiplies all of the attention heads at the end
