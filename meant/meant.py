@@ -94,24 +94,28 @@ class temporalEncoder(nn.Module):
         self.num_heads = num_heads
 
         # this is the positional embedding for the temporal encoder
+        # is this resulting in the nan values
         self.temp_embedding = nn.Parameter(torch.randn(1, lag, dim))
+
+
         self.lag = lag
+
+        # why remove the layernorm
+        # interleaved layernorm so important?
         self.temp_encode = nn.ModuleList([#nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim), 
                                             temporal(num_heads, dim), 
                                             #nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim)])
-        self.temp_encode = self.temp_encode
         
 
     def forward(self, x):
         b, l, d = x.shape
+        # the repeated temporal embedding is not good
         temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
         x += temp_embed
-        count = 0
         for mod in self.temp_encode:           
             x = mod(x)
-            count+=1
         return x
 
 
@@ -168,6 +172,7 @@ class meant(nn.Module):
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
 
+        # so we are printing out everything in here
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)])
 
         # output head
@@ -184,14 +189,7 @@ class meant(nn.Module):
 
     def forward(self, tweets, images):
         _batch = images.shape[0]
-        #print(tweets.shape)
-        # does the embedding matter oh so much
-        
-        #words = tweets.unsqueeze(dim=3)
-        # becomes an expansion of the dimensionality
-        #words = self.embedding_alt(words)
 
-        # reshape for the embedding
         words = tweets.view(_batch * self.lag, tweets.shape[2])
         for mod in self.embedding:
             words = mod(words)
@@ -200,29 +198,44 @@ class meant(nn.Module):
         # one class token per batch input
         words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
 
-        # using 1 class token for each lag day vs repeating the same token
-        txt_classtkn = repeat(self.txt_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
-        words = torch.cat((txt_classtkn, words), dim = 2)
+        # repeating the class token will obviously result in the same 
+        # output?
+        #txt_classtkn = repeat(self.txt_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
+        #words = torch.cat((txt_classtkn, words), dim = 2)
 
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
-
-        image = self.patchEmbed(images)
-        img_classtkn = repeat(self.img_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
-
-        image = torch.cat((img_classtkn, image), dim = 2)
-        for encoder in self.visionEncoders:
-            image = encoder.forward(image)
         
 
-        # average of the classtokens across the lag period 
-        # then we take the class tokens from both encoders
+        image = self.patchEmbed(images)
 
-        temporal = torch.cat((words[:, :, 0, :], image[:, :, 0, :]), dim = 2)
+        # should I repeat for the batch
+        # repeating the class tokens is a bad idea
+        #img_classtkn = repeat(self.img_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
+
+
+        if torch.isnan(image).any():
+            raise ValueError('Nans encountered in image patches')
+            sys.exit()
+
+        for encoder in self.visionEncoders:
+            image = encoder.forward(image)
+
+        if torch.isnan(image).any():
+            raise ValueError('Nans encountered in image encoder')
+            sys.exit()
+
+
+        # I believe this is a mistake, to use attention on the class tokens
+        temporal = torch.cat((torch.mean(words, dim=2), torch.mean(image, dim=2)), dim = 2)
+
         for encoder in self.temporal_encoding:
             temporal = encoder.forward(temporal)
 
-        # final nlp head
+        if torch.isnan(temporal).any():
+            raise ValueError('Nans encountered in the temporal encoder')        
+            sys.exit()
+
         for mod in self.mlpHead:
             temporal = mod(temporal)
         return temporal.squeeze(dim=1)        

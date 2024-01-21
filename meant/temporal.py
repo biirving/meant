@@ -33,11 +33,14 @@ class temporal(nn.Module):
     # batch, lag, vector
     def forward(self, input):
         b, l, _ = input.shape
+
+        # why is my entire batch returning the same output
         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l (h d) -> b h l d', h = self.num_heads), 
                                                         (self.q(input[:, l - 1, :]).view(b, 1, self.atten_size), self.v(input), self.k(input)))
         
         # Compute attention scores using dot product of queries and keys
         scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
+
         @torch.jit.script_if_tracing
         def applyMask():
             if(self.mask):
@@ -45,7 +48,7 @@ class temporal(nn.Module):
                 scores = scores.masked_fill(mask == 0, float('-inf'))
         applyMask()
 
-        # Apply softmax to get attention weights
+        # Apply softmax to get attention 
         weights = torch.softmax(scores, dim=-1)
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)

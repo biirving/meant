@@ -37,9 +37,12 @@ torch.cuda.empty_cache()
 torch.manual_seed(42)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-np_dtype = np.float32
+
+# ensure that this datatype is the same as what the arrays you load in are saved in if doing memmap
+np_dtype = np.float64
 
 # torch datatype to used for automatic mixed precision training
+# is this the correct dtype to process the forward passes with
 torch_dtype = torch.float16
 
 def str2bool(v):
@@ -62,6 +65,7 @@ class metrics():
         self.precision_micro = MulticlassPrecision(num_classes=num_classes, average='micro')
         self.recall_macro = MulticlassRecall(num_classes=num_classes, average='macro')
         self.recall_micro = MulticlassRecall(num_classes=num_classes, average='micro')
+        self.set_name = set_name
     
     def update(self, pred, target):
         self.accuracy.update(pred, target) 
@@ -98,6 +102,7 @@ class metrics():
         print('Micro ' + self.set_name + ' precision: ', precision_micro)
         print('Macro ' + self.set_name + ' recall: ', recall_macro)
         print('Micro ' + self.set_name + ' recall: ', recall_micro)
+        return f1_macro, f1_micro
         
 
 # simple class to help load the dataset
@@ -239,22 +244,24 @@ class meant_trainer():
             print('Training model on epoch ' + str(self.epoch + ep))
 
             # randomization on each epoch
-            indices = np.arange(self.graphs_train.shape[0])
-            np.random.shuffle(indices) 
-            self.graphs_train = self.graphs_train[indices]
-            self.tweets_train = self.tweets_train[indices]
-            self.macds_train = self.macds_train[indices]
+            #indices = np.arange(self.graphs_train.shape[0])
+            #np.random.shuffle(indices) 
+            #self.graphs_train = self.graphs_train[indices]
+            #self.tweets_train = self.tweets_train[indices]
+            #self.macds_train = self.macds_train[indices]
 
-            for graphs, tweets, macds, target in self.train_loader:
+            # does not shuffle between epochs?
+
+            progress_bar = tqdm(self.train_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
+            for graphs, tweets, macds, target in progress_bar:
+
                 self.optimizer.zero_grad() 
                 with torch.autocast(device_type="cuda", dtype=torch_dtype):
-                    out = model.forward(tweets.to(device), graphs.to(device))
-                    print('output', out)
-                    print('target', target)
+                    out = model.forward(tweets.long().to(device), graphs.to(torch.float16).to(device))
                     loss = loss_fct(out, target.to(device).long())                
-                    print(loss)
 
                 scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(self.optimizer)
                 scaler.update()
 
@@ -269,14 +276,14 @@ class meant_trainer():
                 # clean up memory
                 del out
                 del target
-                if(train_index % 10000 == 0):
-                    print('loss: ',  loss.item())
+                #if(train_index % 10000 == 0):
+                #    print('loss: ',  loss.item())
                 del loss
 
             print('length: ', str(time.time() - t0))
             print('loss total: ', sum(training_loss))
 
-            self.train_metrics.show() 
+            train_metrics.show() 
 
             #self.f1_plot(np.array(train_f1_scores))
             self.lr_scheduler.step()
@@ -285,11 +292,14 @@ class meant_trainer():
             val_loss = 0
             print('Evaluating Model...')
             with torch.no_grad():
-                for graphs, tweets, macds, target in self.val_loader:
-                    out = model.forward(tweets.to(device), graphs.to(device))
+                val_progress_bar = tqdm(self.val_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
+                for graphs, tweets, macds, target in val_progress_bar:
+                    with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                        out = model.forward(tweets.long().to(device), graphs.to(torch.float16).to(device))
+                    out = out.detach().cpu()
                     val_metrics.update(out, target) 
 
-            self.val_metrics.show() 
+            val_f1_macro, val_f1_micro = val_metrics.show() 
 
             if self.early_stopping:
                 if(val_f1_macro <= prev_f1):
@@ -319,11 +329,11 @@ class meant_trainer():
             #self.model = torch.jit.trace(self.model, ('input_ids':x_final_input['input_ids'].to(device), 'attention_mask':x_final_input['attention_mask'].to(device)), strict=False)
             with torch.no_grad():
                 for graphs, tweets, macds, target in self.test_loader:
-                    out = model.forward(tweets.to(device), graphs.to(device))
-                    test_metrics.update(out.detach().cpu(), target) 
+                    with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                        out = model.forward(tweets.long().to(device), graphs.to(torch.float16).to(device))
+                        test_metrics.update(out.detach().cpu(), target) 
 
-            
-            self.test_metrics.show()  
+            test_metrics.show()  
             self.f1_plot(np.array(f1_scores))
 
 
@@ -351,7 +361,7 @@ if __name__=='__main__':
     parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=1)
     parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=False, default=False)
     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
-    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 8)
+    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 16)
     parser.add_argument('-eb', '--eval_batch_size',type=int, help='Batch size for evaluation step', default=1)
     parser.add_argument('-tesb', '--test_batch_size',type=int, help='Batch size for test step', default=1)
     parser.add_argument('-testm', '--test_model', type=str2bool, help='Whether or not to test our model', nargs='?', const=True, default=True)
@@ -465,10 +475,22 @@ if __name__=='__main__':
         tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
         graphs = np.ones(tweets.shape[0], 1).astype(np.float32)
     else:
-        graphs = np.memmap('/work/nlp/b.irving/stock/complete/graphs_5.npy', dtype=np_dtype, mode='r')
-        tweets = np.memmap('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
-        macds = np.memmap('/work/nlp/b.irving/stock/complete/macds_5.npy', dtype=np_dtype, mode='r')
-        labels = np.memmap('/work/nlp/b.irving/stock/complete/y_resampled_5.npy', dtype=np_dtype, mode='r')
+        #graphs = np.memmap('/work/nlp/b.irving/stock/complete/graphs_5.npy', dtype=np_dtype, mode='r', shape=(16714, 5, 4, 224, 224))
+        #tweets = np.memmap('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r', shape=(16714, 5, 128))
+        #macds = np.memmap('/work/nlp/b.irving/stock/complete/macds_5.npy', dtype=np_dtype, mode='r', shape=(16714, 5, 4))
+        #labels = np.memmap('/work/nlp/b.irving/stock/complete/y_resampled_5.npy', dtype=np_dtype, mode='r', shape=(16714, 1))
+
+        # the memory mapping does something weird
+        graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
+        tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy')
+        macds = np.load('/work/nlp/b.irving/stock/complete/macds_5.npy')
+        labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')
+
+
+    print(graphs.shape)
+
+    print('Data loaded.')
+
 
     if args.normalize:
         print('Normalizing data...')
@@ -483,6 +505,7 @@ if __name__=='__main__':
         macds /= np.std(macds)
         print('Data normalized.')
 
+    print('Splitting data...') 
     # First split: Separate out the test set
     graphs_train_val, graphs_test, tweets_train_val, tweets_test, macds_train_val, macds_test, y_train_val, y_test = train_test_split(
         graphs, tweets, macds, labels, test_size=0.2, random_state=42)
@@ -506,17 +529,17 @@ if __name__=='__main__':
     # create a dataLoader object
     train_dataset = customDataset(graphs_train, tweets_train, macds_train, y_train)
     val_dataset = customDataset(graphs_val, tweets_val, macds_val, y_val)
-    test_dataset = customDataset(graphs_test, tweets_val, macds_test, y_test)
+    test_dataset = customDataset(graphs_test, tweets_test, macds_test, y_test)
 
     # pass these to our training loop
     train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=args.eval_batch_size, shuffle=False, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, pin_memory=True)
 
-    del graphs_train, tweets_train, macds_train, graphs_val, tweets_train, macds_test
+    del graphs_train, tweets_train, macds_train, graphs_val, tweets_val, macds_val, graphs_test, tweets_test, macds_test
     gc.collect()
 
-    print('Data loaded.')
+    print('Data split.')
 
     params = {
 

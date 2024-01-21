@@ -34,15 +34,11 @@ class languageEncoder(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
 
-        # so, the xPos embeddings will focus on the pixel case
         self.xPos = RotaryEmbedding(
             dim = 48,
             use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
             #xpos_scale_base=2
         )
-
-        # lets try with normal positional encodings
-
         self.encode = nn.ModuleList([nn.LayerNorm(dim), 
                                     nn.Linear(dim, dim), 
                                     xPosAttention(num_heads, dim, self.xPos), 
@@ -60,39 +56,10 @@ class languageEncoder(nn.Module):
             inter = mod(inter)
         return inter + final_resid
 
-# how does this scale to deal with an arbitrary lag period
-# lets make this multimodal temporal model, shall we?
-class temporalEncoder(nn.Module):
-    def __init__(self, dim, num_heads, lag):
-        super(temporalEncoder, self).__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        self.n = 196
-
-        # this is the positional embedding for the temporal encoder
-        self.temp_embedding = nn.Parameter(torch.randn(1, lag, dim))
-        self.lag = lag
-        self.temp_encode = nn.ModuleList([#nn.LayerNorm(dim), 
-                                            nn.Linear(dim, dim), 
-                                            temporal(num_heads, dim), 
-                                            #nn.LayerNorm(dim), 
-                                            nn.Linear(dim, dim)])
-        
-
-    def forward(self, x):
-        b, l, d = x.shape
-        # the temporal embedding is the positional embedding?
-        # use a rotary emebdding here too?
-        temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
-        x += temp_embed
-        for mod in self.temp_encode:           
-            x = mod(x)
-        return x
-
 
 # the meant model without image inputs
-class meant_tweet(nn.Module):
-    def __init__(self, text_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
+class meant_tweet_no_lag(nn.Module):
+    def __init__(self, text_dim, price_dim, height, width, patch_res, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -105,7 +72,7 @@ class meant_tweet(nn.Module):
         
         returns: A classification vector, of size num_classes
         """
-        super(meant_tweet, self).__init__()
+        super(meant_tweet_no_lag, self).__init__()
         
         # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
         self.dim = text_dim
@@ -119,44 +86,29 @@ class meant_tweet(nn.Module):
         # pretrained language embedding from hugging face model
         # what if we have already used the flair embeddings
         self.embedding = nn.ModuleList([embedding])
-        #self.embedding = nn.Linear(128, text_dim)
 
         # classification token for the image component. Will be passed to the temporal attention mechanism
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
-
-        self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)])
 
         # output head
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
 
         # how does this work with the lag period
-        # mean pooling?
-        # yuh
-        #self.txt_classtkn = nn.Parameter(torch.randn(16, lag, 1, text_dim))
-
-        # haven't decided on this dimensionality as of yet
-        self.lag = lag
+        self.txt_classtkn = nn.Parameter(torch.randn(1, 1, text_dim))
 
     def forward(self, tweets):
         _batch = tweets.shape[0]
-        words = tweets.view(_batch * self.lag, tweets.shape[2])
+        words = tweets
         for mod in self.embedding:
             words = mod(words)
-        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
-
-        #txt_classtkn = repeat(self.txt_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
-        #words = torch.cat((self.txt_classtkn, words), dim = 2)
+        txt_classtkn = repeat(self.txt_classtkn, '1 1 d -> b 1 d', b = _batch)
+        words = torch.cat((txt_classtkn, words), dim = 1)
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
 
         # the temporal input is just  the tweet
-        # mean pooling works way better
-        temporal = torch.mean(words, dim=2)
+        temporal = words[:, 0, :].view(_batch, 768)
 
-        for encoder in self.temporal_encoding:
-            temporal = encoder.forward(temporal)
-
-        # we process temporal output
         for mod in self.mlpHead:
             temporal = mod(temporal)
 
