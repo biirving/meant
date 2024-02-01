@@ -66,7 +66,6 @@ class temporalEncoder(nn.Module):
                                             temporal(num_heads, dim), 
                                             #nn.LayerNorm(dim), 
                                             nn.Linear(dim, dim)])
-        self.temp_encode = self.temp_encode.to(torch.float32)
         
 
     def forward(self, x):
@@ -74,7 +73,6 @@ class temporalEncoder(nn.Module):
         # the temporal embedding is the positional embedding?
         temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
         x += temp_embed
-        x = x.double()
         count = 0
         for mod in self.temp_encode:           
             x = mod(x)
@@ -82,7 +80,7 @@ class temporalEncoder(nn.Module):
         return x
 
 class meant_vision(nn.Module):
-    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, num_heads= 8, num_encoders = 1, channels=4):
+    def __init__(self, image_dim, price_dim, height, width, patch_res, lag, num_classes, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -95,10 +93,10 @@ class meant_vision(nn.Module):
         
         returns: A classification vector, of size num_classes
         """
-        super(meant, self).__init__()
+        super(meant_vision, self).__init__()
         
         # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
-        self.dim = image_dim + price_dim
+        self.dim = image_dim
         self.num_heads = num_heads
 
         # for the image component of the encoder
@@ -124,29 +122,20 @@ class meant_vision(nn.Module):
         # output head
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
 
-        # each component has a class token
-        self.img_classtkn = nn.Parameter(torch.randn(1, lag, 1, image_dim))
-
-        # how does this work with the lag period
-        self.txt_classtkn = nn.Parameter(torch.randn(1, lag, 1, text_dim))
-
         # haven't decided on this dimensionality as of yet
         #self.temp_classtkn = nn.Parameter(torch.randn(1, image_dim))
 
-    def forward(self, images, tweets, prices):
-        _batch = images.shape[0]
+    def forward(self, images):
 
         # the datatype correction depends on the system?
-        image = self.patchEmbed(images.double())
+        image = self.patchEmbed(images)
 
-        img_classtkn = repeat(self.img_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
-        image = torch.cat((img_classtkn, image), dim = 2)
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
 
         # then we take the class tokens from both encoders
-        temporal_input = torch.cat((words[:, :, 0, :], image[:, :, 0, :], prices), dim = 2)
-        temporal = temporal_input.to(torch.float32)
+        temporal_input = torch.mean(image, dim=2)
+        temporal = temporal_input
 
         for encoder in self.temporal_encoding:
             temporal = encoder.forward(temporal)

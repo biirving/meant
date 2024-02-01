@@ -12,19 +12,6 @@ from transformers import AutoModel, AutoTokenizer
 from utils import RMSNorm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# Check if CUDA is available
-if torch.cuda.is_available():
-    # Get the name of the CUDA device
-    cuda_device_name = torch.cuda.get_device_name(0)
-
-    # Check if the device name contains "Ampere" or a later architecture
-    if "Ampere" in cuda_device_name or "A100" in cuda_device_name:
-        ampere = True
-    else:
-        ampere = False
-else:
-    print("CUDA is not available on this system.")
-    ampere = False
 
 # okay, lets run these experiments
 # because
@@ -64,9 +51,8 @@ class visionEncoder(nn.Module):
         # then another residual connection before the output is processed
         return inter + final_resid
 
-# separate encoder module, because might make changes to structure
-class languageEncoder(nn.Module):
-    def __init__(self, dim, num_heads, flash=False):
+class languageEncoder_v2(nn.Module):
+    def __init__(self, dim, num_heads, embeddings=None):
         """
         Encoder to extract language inputs. Virtually identical to visual encoder, except that it utitilizes 
         the xPos embeddings rather than the base rotary embeddings
@@ -75,36 +61,35 @@ class languageEncoder(nn.Module):
         self.dim = dim
         self.num_heads = num_heads
 
-        # how support xPos embeddings though?
+        # should we remove the positional encoding?
+        self.embeddings = embeddings
+
         # so, the xPos embeddings will focus on the pixel case
         self.xPos = RotaryEmbedding(
             dim = 48,
             use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
             #xpos_scale_base=2
         )
-        if flash and ampere:
-            self.encode = nn.ModuleList([RMSNorm(dim), 
-                                        nn.Linear(dim, dim), 
-                                        xPosAttention_flash(num_heads, dim, self.xPos), 
-                                        RMSNorm(dim), 
-                                        nn.Linear(dim, dim)])
-        else:
-            if flash and not ampere and torch.cuda.is_available():
-                print(f"The GPU {cuda_device_name} is not from the Ampere series or later. Flash attention not supported")
-            elif flash:
-                print('Cuda not supported. Cannot use flash attention')
-            self.encode = self.encode = nn.ModuleList([RMSNorm(dim), 
-                                        nn.Linear(dim, dim), 
-                                        xPosAttention(num_heads, dim, self.xPos), 
-                                        RMSNorm(dim), 
-                                        nn.Linear(dim, dim)])
+
+        self.encode = nn.ModuleList([RMSNorm(dim), 
+                                    nn.Linear(dim, dim), 
+                                    xPosAttention_flash(num_heads, dim, self.xPos), 
+                                    RMSNorm(dim), 
+                                    nn.Linear(dim, dim)])
         self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Linear(dim, dim)])
 
-    def forward(self, input):
-        inter = input
+    def forward(self, words):
+        # if you put the embeddings in here, you can't stack the encoders
+        # the problem is that we stack embeddings?
+        if embeddings is not None:
+            for mod in self.embeddings:
+                words = mod(words)
+            words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+        else:
+            inter = words 
         for mod in self.encode:
             inter = mod(inter)
-        inter = inter + input
+        inter = inter + words
         final_resid = inter
         for mod in self.encode2:
             inter = mod(inter)
@@ -142,8 +127,8 @@ class temporalEncoder(nn.Module):
         return x
 
 
-class meant(nn.Module):
-    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, flash=False, num_heads= 8, num_encoders = 1, channels=4):
+class meant_v2(nn.Module):
+    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -156,7 +141,7 @@ class meant(nn.Module):
         
         returns: A classification vector, of size num_classes
         """
-        super(meant, self).__init__()
+        super(meant_v2, self).__init__()
 
 
         # recent additions for editing purposes
@@ -193,8 +178,13 @@ class meant(nn.Module):
             nn.Linear(self.patch_dim, image_dim))
 
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
-        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash) for i in range(num_encoders)])
 
+        # now the languageEncoders are an entirely separate module
+        # we can save the whole module list?
+        self.languageEncoders = nn.ModuleList([
+            languageEncoder(text_dim, num_heads, embeddings=embedding) if i == 0 else languageEncoder(text_dim, num_heads)
+            for i in range(num_encoders)
+        ])
         # so we are printing out everything in here
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)])
 
@@ -212,26 +202,30 @@ class meant(nn.Module):
 
     def forward(self, tweets, images):
         _batch = images.shape[0]
-        words = tweets.view(_batch * self.lag, tweets.shape[2])
-        for mod in self.embedding:
-            words = mod(words)
 
-        
-        print('word nans',torch.isnan(words).any().item())
-          # one class token per batch input
-        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+        # should this all be contained inside the language encoder?
+        # depends on pretraining scheme of choice
+        words = tweets.view(_batch * self.lag, tweets.shape[2])
+        # then read our encoder input 
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
-
-        print('encoded word nans',torch.isnan(words).any().item())
+        
+        # we should do the same with the vision encoder (for pretraining)
         image = self.patchEmbed(images)
-        # should I repeat for the batch
+
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
+
         # I believe this is a mistake, to use attention on the class tokens
         temporal = torch.cat((torch.mean(words, dim=2), torch.mean(image, dim=2)), dim = 2)
+
         for encoder in self.temporal_encoding:
             temporal = encoder.forward(temporal)
+
+        if torch.isnan(temporal).any():
+            raise ValueError('Nans encountered in the temporal encoder')        
+            sys.exit()
+
         for mod in self.mlpHead:
             temporal = mod(temporal)
         return temporal.squeeze(dim=1)        

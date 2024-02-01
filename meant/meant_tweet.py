@@ -92,7 +92,7 @@ class temporalEncoder(nn.Module):
 
 # the meant model without image inputs
 class meant_tweet(nn.Module):
-    def __init__(self, text_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
+    def __init__(self, text_dim, price_dim, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -111,30 +111,17 @@ class meant_tweet(nn.Module):
         self.dim = text_dim
         self.num_heads = num_heads
 
-        # for the image component of the encoder
-        self.channels = channels
-        self.patch_dim = self.channels * patch_res * patch_res
-        self.n = int((height * width) / (patch_res ** 2))
-
         # pretrained language embedding from hugging face model
         # what if we have already used the flair embeddings
         self.embedding = nn.ModuleList([embedding])
-        #self.embedding = nn.Linear(128, text_dim)
 
         # classification token for the image component. Will be passed to the temporal attention mechanism
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
-
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)])
 
         # output head
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
 
-        # how does this work with the lag period
-        # mean pooling?
-        # yuh
-        #self.txt_classtkn = nn.Parameter(torch.randn(16, lag, 1, text_dim))
-
-        # haven't decided on this dimensionality as of yet
         self.lag = lag
 
     def forward(self, tweets):

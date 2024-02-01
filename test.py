@@ -28,63 +28,65 @@ from torch.nn.utils.rnn import pad_sequence
 from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall
 import re
 sys.path.append('../meant')
-from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag
+from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, vl_BERT_Wrapper, ViltWrapper 
+from utils import f1_metrics
 from joblib import Memory
 from datasets import load_dataset
 
-from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall
+from transformers import BertTokenizer, VisualBertModel
+from transformers import ViltModel, ViltProcessor
+
+from einops.layers.torch import Rearrange
+from PIL import Image
+import requests
+device = torch.device('cuda')
+bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+# try to change the weight type?
+print(bertweet.embeddings)
+print(bertweet.embeddings.word_embeddings.weight.dtype)
+print(bertweet.embeddings.position_embeddings.weight.dtype)
+print(bertweet.embeddings.token_type_embeddings.weight.dtype)
+sys.exit()
+model = meant(text_dim = 768, 
+                image_dim = 768, 
+                price_dim = 4, 
+                height = 224, 
+                width = 224, 
+                patch_res = 16, 
+                lag = 5, 
+                num_classes = 2,
+                flash=True,
+                embedding = bertweet.embeddings,
+                num_encoders=12).half().to(device)
+
+sample_graph = torch.ones(3, 5, 4, 224, 224).half().to(device)
+sample_tweet = torch.ones(3, 5, 128).long().to(device)
+
+t0 = time.time()
+for _ in range(1000):
+    model.forward(sample_tweet, sample_graph)
+print(time.time() - t0)
+sys.exit()
 
 
 
+adjacent_folder_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'michinaga'))
 
-class metrics():
-    def __init__(self, num_classes, set_name):
-        self.accuracy = Accuracy(task='multiclass', num_classes=num_classes)
-        self.f1_macro = MulticlassF1Score(num_classes=num_classes, average='macro')
-        self.f1_micro = MulticlassF1Score(num_classes=num_classes, average='micro')
-        self.precision_macro = MulticlassPrecision(num_classes=num_classes, average='macro')
-        self.precision_micro = MulticlassPrecision(num_classes=num_classes, average='micro')
-        self.recall_macro = MulticlassRecall(num_classes=num_classes, average='macro')
-        self.recall_micro = MulticlassRecall(num_classes=num_classes, average='micro')
-        self.set_name = set_name
-    
-    def update(self, pred, target):
-        self.accuracy.update(pred, target) 
-        self.f1_macro.update(pred, target) 
-        self.f1_micro.update(pred, target)
-        self.precision_macro.update(pred, target)
-        self.precision_micro.update(pred, target)
-        self.recall_macro.update(pred, target)
-        self.recall_micro.update(pred, target)
+# also, want to make a stocknet dataset
+# for training?
+# figure out this import, and we are on the homestretch
+# on god
+sys.path.append('/work/nlp/b.irving/michinaga/teanet/models')
+sys.path.append('/work/nlp/b.irving/michinaga/teanet/utils/')
+import classicAttention
+from teanet import teanet
+device = torch.device('cuda')
 
-    def compute(self):
-        acc = self.accuracy.compute()
-        f1_macro = self.f1_macro.compute()
-        f1_micro = self.f1_micro.compute()
-        precision_macro = self.precision_macro.compute()
-        precision_micro = self.precision_micro.compute()
-        recall_macro = self.precision_macro.compute()
-        recall_micro = self.precision_micro.compute()
-        return (acc, f1_macro, f1_micro, precision_macro, 
-                precision_micro, recall_macro, recall_micro)
+#config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/vilbert.json', local_files_only=True)
+#config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
 
-    def show(self):
-        (accuracy, 
-        f1_macro, 
-        f1_micro, 
-        precision_macro, 
-        precision_micro, 
-        recall_macro, 
-        recall_micro) = self.compute()
-        print(self.set_name + ' accuracy: ', accuracy)
-        print('Macro ' + self.set_name + ' f1: ', f1_macro)
-        print('Micro ' + self.set_name + ' f1: ', f1_micro)
-        print('Macro ' + self.set_name + ' precision: ', precision_macro)
-        print('Micro ' + self.set_name + ' precision: ', precision_micro)
-        print('Macro ' + self.set_name + ' recall: ', recall_macro)
-        print('Micro ' + self.set_name + ' recall: ', recall_micro)
-        return f1_macro, f1_micro
-
+# run on teanet to compare. Make stocknet into a dataset that I can process easily?
+# only contains one modality
 """
 
 all_ys = np.load('/work/nlp/b.irving/stock/complete/all_ys_5.npy')
@@ -127,7 +129,7 @@ graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
 #tweets = np.load('/work/nlp/b.irving/stock/complete/all_original_tweets_resampled_5.npy')
 #tweets = np.load('/work/nlp/b.irving/stock/complete/all_original_tweets_5.npy')
 tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy')
-#macds = np.memmap('/work/nlp/b.irving/stock/complete/macds_5.npy', dtype=np_dtype, mode='r', shape=(16714, 5, 4))
+macds = np.memmap('/work/nlp/b.irving/stock/complete/macds_5.npy', dtype=np_dtype, mode='r', shape=(16714, 5, 4))
 #labels = np.memmap('/work/nlp/b.irving/stock/complete/y_resampled_5.npy', dtype=np_dtype, mode='r', shape=(16714, 1))
 #labels = np.load('/work/nlp/b.irving/stock/complete/y_og_tweets_resampled_5.npy')
 labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')
@@ -183,14 +185,14 @@ class customDataset(Dataset):
     def __init__(self, graphs, tweets, macds, labels):
         self.graphs = torch.tensor(graphs)
         self.tweets = torch.tensor(tweets)
-        self.macds = torch.tensor(macds)
         self.labels = torch.tensor(labels)
+        self.macds = torch.tensor(macds)
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        return self.graphs[idx], self.tweets[idx], self.macds[idx], self.labels[idx]
+        return self.graphs[idx], self.tweets[idx], macds[idx], self.labels[idx]
 
 
 class TweetsData(Dataset):
@@ -206,7 +208,7 @@ class TweetsData(Dataset):
 
 batch_size = 16 
 #data = customDataset(graphs, tweets, macds, labels)
-data = TweetsData(tweets, labels)
+data = customDataset(tweets, graphs, macds, labels)
 toProcess = DataLoader(data, shuffle=True, batch_size=batch_size, pin_memory=True)
 
 class CustomIMDBDataset(Dataset):
@@ -234,15 +236,27 @@ bert = AutoModel.from_pretrained("vinai/bertweet-base")
 # should we get more general images, of S&P 500 related images in general?
 # I think so
 # using the macd graphs is not very interesting now is it
-model = meant_tweet(text_dim = 768, 
-                price_dim = 4, 
-                height = 224, 
-                width = 224, 
-                patch_res = 16, 
-                num_classes = 2, 
-                lag=5, 
-                embedding = bert.embeddings, 
-                num_encoders=1).cuda()
+#model = meant_tweet(text_dim = 768, 
+#                price_dim = 4, 
+#                num_classes = 2, 
+#                lag=5, 
+#                embedding = bert.embeddings, 
+#                num_encoders=1).cuda()
+
+#config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/vl_bert.json', local_files_only=True)
+#vl_bert_model = VisualBertModel._from_config(config).cuda()
+# change the word embeddings to match the bertweet word embeddings
+#vl_bert_model.embeddings.word_embeddings = bert.embeddings.word_embeddings
+# need to use the BerTWEET embedding layer, because the number of classes is different
+#model = CustomClassifier(vl_bert_model, 768, 2).cuda()
+
+# for vilt testing
+
+config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/vilt.json', local_files_only=True)
+vilt = ViltModel._from_config(config)
+vilt.embeddings.text_embeddings.word_embeddings=bert.embeddings.word_embeddings
+#model = ViltWrapper(vilt, 768, 2).to(device)
+model = teanet(5, 128, 2, 5, 12, 10).cuda()
 
 # create a function which detects vanishing or exploding gradients
 def detect_vanishing_exploding(layer_name, gradient_tensor, exploding_threshold=10, vanishing_threshold=0.0000001):
@@ -284,8 +298,8 @@ torch_dtype = torch.float16
 # okay, lets test this with metrics. The investigation continues
 
 # test with a simple balanced dataset
-metric = metrics(2, 'train')
-test_metric = metrics(2, 'test')
+metric = f1_metrics(2, 'train')
+test_metric = f1_metrics(2, 'test')
 
 
 index = 0
@@ -319,7 +333,7 @@ loss_fct = nn.CrossEntropyLoss()
 num_epochs=1
 for epoch in range(num_epochs):
     progress_bar = tqdm(toProcess, desc=f'Epoch {epoch+1}/{num_epochs}')
-    for text, target in progress_bar:
+    for text, image, macd, target in progress_bar:
 
         # tokenize inputs and move everything to cuda
         #tweets = tokenizer(text, padding='max_length', truncation=True, max_length=128, return_tensors='pt')
@@ -328,7 +342,10 @@ for epoch in range(num_epochs):
         #out = model(tweets['input_ids'], tweets['attention_mask'])
         # so now the tweets are out of bounds? WTF?
         # they were processed with different tokenizer
-        out = model(text.long().cuda())
+        # going to throw an error
+        #out = model(text[:, 4, :].squeeze(dim=1).to(torch.float32).cuda(), image[:, 4, :, :].to(torch.float32).squeeze(dim=1).cuda())
+        out = model(text.float().cuda(), macd.float().cuda())
+        
         
 #        with torch.autocast(device_type="cuda", dtype=torch.float16):
         optimizer.zero_grad()

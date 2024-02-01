@@ -9,7 +9,6 @@ from rotary_embedding_torch import apply_rotary_emb, RotaryEmbedding, broadcat
 A classic attention mechanism with xPos embedding support.
 """
 class xPosAttention(nn.Module):
-
     # the default values in the original paper for num_heads and dim are 5 and 50 respectively
     def __init__(self, num_heads, dim, xPos:RotaryEmbedding, mask=True, droput=0.):
         super(xPosAttention, self).__init__()
@@ -32,16 +31,14 @@ class xPosAttention(nn.Module):
         self.v = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         
+    # should the mask be passed as an input? has to be for mlm pretraining
     def forward(self, input):
+        # what we could do instead is reshape the inputs have to allow for flash attention
         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l s (h d) -> b l h s d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
         q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
-        #q_mat = self.xPos.rotate_queries_or_keys(q_mat)
-        #k_mat = self.xPos.rotate_queries_or_keys(k_mat)
-        
         # Compute attention scores using dot product of queries and keys
         scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
-
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
         def applyMask(scores):
@@ -50,18 +47,14 @@ class xPosAttention(nn.Module):
                 mask = torch.tril(torch.ones(scores.size(-1), scores.size(-1))).unsqueeze(0).unsqueeze(1).to(input.device)
                 scores = scores.masked_fill(mask == 0, float('-inf'))
             return scores
-
-        #scores = applyMask(scores)
-
+        scores = applyMask(scores)
         # apply dropout
         scores = self.dropout(scores)
         # Apply softmax to get attention weights
         weights = torch.softmax(scores, dim=-1)
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
-
         # reshape for the linear layer
         inter = rearrange(inter, 'b l h s d -> b l s (h d)')
-
         output = self.multi_mad(inter)
         return output
