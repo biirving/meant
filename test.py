@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+import sys
+from datasets import load_dataset
+import torch
 import csv
 import pandas as pd
 import ast
@@ -28,7 +31,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall
 import re
 sys.path.append('../meant')
-from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, vl_BERT_Wrapper, ViltWrapper 
+from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, vl_BERT_Wrapper, ViltWrapper, bertweet_wrapper, visionEncoder, languageEncoder, meant_language_pretrainer, meant_vision_pretrainer
 from utils import f1_metrics
 from joblib import Memory
 from datasets import load_dataset
@@ -39,14 +42,161 @@ from transformers import ViltModel, ViltProcessor
 from einops.layers.torch import Rearrange
 from PIL import Image
 import requests
+from transformers import AutoImageProcessor, ViTForMaskedImageModeling
+import itertools
+
+from huggingface_hub import login
+# hugging face login 
+login('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')
+
+model_checkpoint = "dandelin/vilt-b32-mlm"
+dataset = load_dataset("Graphcore/vqa", split="validation[:200]")
+print(dataset)
+
+labels = [item['ids'] for item in dataset['label']]
+flattened_labels = list(itertools.chain(*labels))
+unique_labels = list(set(flattened_labels))
+label2id = {label: idx for idx, label in enumerate(unique_labels)}
+id2label = {idx: label for label, idx in label2id.items()} 
+
+def replace_ids(inputs):
+  inputs["label"]["ids"] = [label2id[x] for x in inputs["label"]["ids"]]
+  return inputs
+
+dataset = dataset.map(replace_ids)
+flat_dataset = dataset.flatten()
+flat_dataset.features
+
+processor = ViltProcessor.from_pretrained(model_checkpoint)
+def preprocess_data(examples):
+    image_paths = examples['image_id']
+    images = [Image.open(image_path) for image_path in image_paths]
+    texts = examples['question']    
+    encoding = processor(images, texts, padding="max_length", truncation=True, return_tensors="pt")
+    print(encoding['pixel_mask'])
+    for k, v in encoding.items():
+          encoding[k] = v.squeeze()
+    targets = []
+    for labels, scores in zip(examples['label.ids'], examples['label.weights']):
+        target = torch.zeros(len(id2label))
+        for label, score in zip(labels, scores):
+            target[label] = score
+        targets.append(target)
+    encoding["labels"] = targets
+    return encoding
+
+processed_dataset = flat_dataset.map(preprocess_data, batched=True, remove_columns=['question','question_type',  'question_id', 'image_id', 'answer_type', 'label.ids', 'label.weights'])
+from transformers import DefaultDataCollator
+data_collator = DefaultDataCollator()
+from transformers import ViltForQuestionAnswering
+model = ViltForQuestionAnswering.from_pretrained(model_checkpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id)
+from transformers import TrainingArguments
+repo_id = "MariaK/vilt_finetuned_200"
+training_args = TrainingArguments(
+    output_dir=repo_id,
+    per_device_train_batch_size=4,
+    num_train_epochs=20,
+    save_steps=200,
+    logging_steps=50,
+    learning_rate=5e-5,
+    save_total_limit=2,
+    remove_unused_columns=False,
+    push_to_hub=True,
+)
+from transformers import Trainer
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    data_collator=data_collator,
+    train_dataset=processed_dataset,
+    tokenizer=processor,
+)
+trainer.train()
+sys.exit()
+
+
+
+
+
+
+
+
+
+
+
+
+bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+device = torch.device('cuda')
+model = meant(text_dim = 768, 
+    image_dim = 768, 
+    price_dim = 4, 
+    height = 224, 
+    width = 224, 
+    patch_res = 16, 
+    lag = 5, 
+    num_classes = 2, 
+    embedding = bertweet.embeddings,
+    flash=False,
+    num_encoders=1).to(device)
+tweets = torch.ones(16, 5, 128)
+images = torch.ones(16,5, 4, 224, 224)
+model.forward(tweets.long().cuda(), images.cuda())
+
+sys.exit()
+model_checkpoint = "dandelin/vilt-b32-mlm"
+processor = ViltProcessor.from_pretrained(model_checkpoint)
+
+dataset = load_dataset("Graphcore/vqa", split="train[0:10]")
+print(dataset[0])
+print(dataset)
+
+labels = [item['ids'] for item in dataset['label']]
+flattened_labels = list(itertools.chain(*labels))
+unique_labels = list(set(flattened_labels))
+label2id = {label: idx for idx, label in enumerate(unique_labels)}
+id2label = {idx: label for label, idx in label2id.items()} 
+def replace_ids(inputs):
+    inputs["label"]["ids"] = [label2id[x] for x in inputs["label"]["ids"]]
+    return inputs
+
+# we want to preprocess these values
+dataset = dataset.map(replace_ids)
+flat_dataset = dataset.flatten()
+print(flat_dataset)
+
+# need to account for the preprocess data
+def preprocess_data(examples):
+    image_paths = examples['image_id']
+    images = [Image.open(image_path) for image_path in image_paths]
+    texts = examples['question']    
+    encoding = processor(images, texts, padding="max_length", truncation=True, return_tensors="pt")
+    for k, v in encoding.items():
+        encoding[k] = v.squeeze()
+    targets = []
+    for labels, scores in zip(examples['label.ids'], examples['label.weights']):
+        target = torch.zeros(len(id2label))
+        for label, score in zip(labels, scores):
+            target[label] = score
+        targets.append(target)
+    encoding["labels"] = targets
+    return encoding
+
+processed_dataset = flat_dataset.map(preprocess_data, batched=True, 
+    remove_columns=['question', 'question_type', 'question_id', 'image_id', 'answer_type', 'label.ids', 'label.weights'])
+
+# TODO: Batch extract the image and language input ids
+
+print(processed_dataset[0].keys())
+print(id2label)
+print([len(label) for label in processed_dataset["labels"]])
+#print(processed_dataset)
+
+#print(flat_dataset)
+#print(flat_dataset[0])
+sys.exit()
 device = torch.device('cuda')
 bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
-# try to change the weight type?
-print(bertweet.embeddings)
-print(bertweet.embeddings.word_embeddings.weight.dtype)
-print(bertweet.embeddings.position_embeddings.weight.dtype)
-print(bertweet.embeddings.token_type_embeddings.weight.dtype)
-sys.exit()
+print(pretrained_vision)
 model = meant(text_dim = 768, 
                 image_dim = 768, 
                 price_dim = 4, 
@@ -54,11 +204,26 @@ model = meant(text_dim = 768,
                 width = 224, 
                 patch_res = 16, 
                 lag = 5, 
-                num_classes = 2,
-                flash=True,
+                num_classes = 2, 
                 embedding = bertweet.embeddings,
-                num_encoders=12).half().to(device)
+                flash=False,
+                num_encoders=12).to(device)
+# using pretrained language encoder
+# need to pretrain a 12 encoder setup
+pretrained_vision = torch.load('/work/nlp/b.irving/meant_runs/models/meant_vision_encoder/meant_vision_encoder_Tempstock_0.pt')
+language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt')
+model.languageEncoders = language_encoders.languageEncoders
+model.visionEncoders = pretrained_vision.visionEncoders
+print(model)
+sys.exit()
+# Count parameters
+total_params = sum(p.numel() for p in model.parameters())
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+print(f"Total Parameters: {total_params}")
+print(f"Trainable Parameters: {trainable_params}")
+
+sys.exit()
 sample_graph = torch.ones(3, 5, 4, 224, 224).half().to(device)
 sample_tweet = torch.ones(3, 5, 128).long().to(device)
 

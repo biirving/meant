@@ -37,6 +37,8 @@ class temporal(nn.Module):
         # why is my entire batch returning the same output
         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l (h d) -> b h l d', h = self.num_heads), 
                                                         (self.q(input[:, l - 1, :]).view(b, 1, self.atten_size), self.v(input), self.k(input)))
+
+
         
         # Compute attention scores using dot product of queries and keys
         scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)

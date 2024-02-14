@@ -27,18 +27,18 @@ class xPosAttention(nn.Module):
 
         # these weights will be initialized randomly
         # in terms of the weights, they will eventually attend to different parts of the inputs in a similar way
-        self.q = nn.Linear(self.dim, self.Dh * self.num_heads).float()
-        self.v = nn.Linear(self.dim, self.Dh * self.num_heads).float()
-        self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+        self.q = nn.Linear(self.dim, self.Dh * self.num_heads)
+        self.v = nn.Linear(self.dim, self.Dh * self.num_heads)
+        self.k = nn.Linear(self.dim, self.Dh * self.num_heads)
         
     # should the mask be passed as an input? has to be for mlm pretraining
-    def forward(self, input):
+    def forward(self, input, attention_mask=None):
         # what we could do instead is reshape the inputs have to allow for flash attention
-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l s (h d) -> b l h s d', h = self.num_heads), 
+        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b s (h d) -> b h s d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
         q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
         # Compute attention scores using dot product of queries and keys
-        scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
+        scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
         def applyMask(scores):
@@ -48,6 +48,13 @@ class xPosAttention(nn.Module):
                 scores = scores.masked_fill(mask == 0, float('-inf'))
             return scores
         scores = applyMask(scores)
+
+        # lets see how this trains 
+        # so, we should rerun
+        if attention_mask is not None:
+            attention_mask = 1 - attention_mask.unsqueeze(1).unsqueeze(2)
+            scores = scores + attention_mask * -1e9
+
         # apply dropout
         scores = self.dropout(scores)
         # Apply softmax to get attention weights
@@ -55,6 +62,6 @@ class xPosAttention(nn.Module):
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
         # reshape for the linear layer
-        inter = rearrange(inter, 'b l h s d -> b l s (h d)')
+        inter = rearrange(inter, 'b h s d -> b s (h d)')
         output = self.multi_mad(inter)
         return output

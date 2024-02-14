@@ -30,6 +30,7 @@ from transformers import (
     VisualBertModel,
     ViltModel,
     ViltProcessor,
+    RobertaForMaskedLM
     #DebugUnderflowOverflow,
 )
 from datasets import load_dataset
@@ -38,11 +39,11 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 from torch.utils.tensorboard import SummaryWriter
 import pandas as pd
 from einops import repeat, rearrange
-from utils import mlm_dataset
-
 
 sys.path.append('../meant')
 from meant import languageEncoder
+from utils import mlm_dataset
+
 torch.cuda.empty_cache()
 torch.manual_seed(42)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -71,28 +72,20 @@ def str2bool(v):
 # pretrain a word embedding or not?
 
 class meant_language_pretrainer(nn.Module):
-    def __init__(self, num_encoders, mlm_input_dim, embedding, lag=5, text_dim=768, num_heads=8):
+    def __init__(self, num_encoders, mlm_input_dim, embedding, lm_head, flash=False, lag=5, text_dim=768, num_heads=8):
         super(meant_language_pretrainer, self).__init__()
         self.embedding = nn.ModuleList([embedding])
-        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=True)])
-        self.mlm_head = nn.Sequential(nn.GELU(), nn.Linear(mlm_input_dim, 1))
+        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash) for _ in range(num_encoders)])
+        # my mlm head has to be the same size as the vocabulary list (come on son)
+        self.mlm_head = lm_head 
         self.lag=lag
 
-    def forward(self, words):
-        # try with our own pretrained embedding
-        _batch = words.shape[0]
-        words = words.view(_batch * self.lag, words.shape[2])
+    def forward(self, words, attention_mask):
         for mod in self.embedding:
-            #print(mod)
-            #print('word nans',torch.isnan(words).any().item())
             words = mod(words)
-        #print('word nans',torch.isnan(words).any().item())
-        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
         for encoder in self.languageEncoders:
-            #print('word nans',torch.isnan(words).any().item())
-            words = encoder.forward(words)
-        #print('encoded word nans', torch.isnan(words).any().item())
-        return self.mlm_head(words).squeeze(dim=3)
+            words = encoder.forward(words, attention_mask=attention_mask)
+        return self.mlm_head(words)
 
 
 class mlm_pretrainer():
@@ -121,6 +114,7 @@ class mlm_pretrainer():
         self.train_data = params['train_data'] 
         self.val_data = params['val_data']
         self.batch_size = params['batch_size']
+        self.dataset = params['dataset']
 
         # epochs
         self.epoch = params['epoch']
@@ -133,6 +127,7 @@ class mlm_pretrainer():
 
         # model specific         
         self.model = params['model']
+        self.config = params['config']
         self.dimension = params['dim']
         self.num_layers = params['num_layers']
         self.dropout = params['dropout']
@@ -172,27 +167,24 @@ class mlm_pretrainer():
             final_epoch = ep
             target_values = []
             print('Training model on epoch ' + str(self.epoch + ep))
-
             t0 = time.time()
             progress_bar = tqdm(self.train_data, desc=f'Epoch {ep+1}/{self.num_epochs}')
             for batch in progress_bar:
                 self.optimizer.zero_grad() 
+                input_ids = batch['input_ids'].squeeze(dim=1).to(device)
+                attention_mask = batch['attention_mask'].squeeze(dim=1).to(device)
+                labels = batch['labels'].squeeze(dim=1).to(device)  # Assuming 'labels' are the masked labels
                 with torch.autocast(device_type="cuda", dtype=torch_dtype):
-                    # I don't need to feed in an attention mask
-                    #inputs = {'input_ids':batch['input_ids'].squeeze(dim=1).to(device), 'attention_mask':batch['attention_mask'].squeeze(dim=1).to(device)}
-                    # have to reshape the input into a readable batch
-                    tweet_input = batch['input_ids'].squeeze(dim=1).to(device)
-                    if tweet_input.shape[0] % self.batch_size != 0:
+                    if input_ids.shape[0] % self.batch_size != 0:
                         break 
-                    tweet_input = rearrange(tweet_input, '(b l) d -> b l d', b = self.batch_size)
-                    out = self.model(tweet_input.long())
-                    target = batch['labels'].squeeze(dim=1)
-                    target = rearrange(target, '(b l) d -> b l d', b = self.batch_size)
-                    loss = loss_fct(out, target.float().to(device))
+                    out = self.model(input_ids, attention_mask=attention_mask)
+                    target = batch['labels'].squeeze(dim=1).cuda()
+                    loss = loss_fct(out.view(-1, self.config.vocab_size), target.view(-1))
                 writer.add_scalar("charts/loss", loss.item(), global_step)
                 scaler.scale(loss).backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(self.optimizer)
+                scaler.update()
 
                 # take the tensors off the gpu
                 out = out.detach().cpu()
@@ -210,15 +202,16 @@ class mlm_pretrainer():
             val_loss = 0
             with torch.no_grad():
                 for batch in val_progress_bar:
+                    input_ids = batch['input_ids'].squeeze(dim=1).to(device)
+                    attention_mask = batch['attention_mask'].squeeze(dim=1).to(device)
+                    labels = batch['labels'].squeeze(dim=1).to(device)  # Assuming 'labels' are the masked labels
                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
-                        tweet_input = batch['input_ids'].squeeze(dim=1).to(device)
-                        if tweet_input.shape[0] % self.batch_size != 0:
+                        if input_ids.shape[0] % self.batch_size != 0:
                             break 
-                        tweet_input = rearrange(tweet_input, '(b l) d -> b l d', b = self.batch_size)
-                        out = self.model(tweet_input.long())
-                        target = batch['labels'].squeeze(dim=1)
-                        target = rearrange(target, '(b l) d -> b l d', b = self.batch_size)
-                        loss = loss_fct(out, target.float().to(device))
+                        # we need both a casual and a attention mask
+                        out = self.model(input_ids, attention_mask=attention_mask)
+                        target = batch['labels'].squeeze(dim=1).cuda()
+                        loss = loss_fct(out.view(-1, self.config.vocab_size), target.view(-1))
                         val_step += self.batch_size
                         # track the val loss with tensorboard
                         writer.add_scalar("charts/val_loss", loss, val_step)
@@ -232,9 +225,9 @@ class mlm_pretrainer():
                 else:
                     prev_val_loss = val_loss
 
-        torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' +  self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
-        torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
-        torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
+        torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' + self.dataset + '_' + str(self.run_id) + '_' + str(final_epoch + 1) + '.pt')
+        torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + str(self.run_id) + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
+        torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  str(self.run_id) + '_' + str(self.epoch + 1) + '.pt')
 
 if __name__=='__main__':
     # nightly pytorch build required
@@ -257,12 +250,12 @@ if __name__=='__main__':
 
     # Training loop 
     parser.add_argument('-e', '--epoch', type = int, help = 'Current epoch at start of training', default=0)
-    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=10)
+    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=1)
     parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=False, default=False)
     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
     parser.add_argument('-b', '--batch_size',type=int, help='Batch size for pretraining', default=16)
     parser.add_argument('-testm', '--test_model', type=str2bool, help='Whether or not to test our model', nargs='?', const=True, default=True)
-    parser.add_argument('-dn', '--dataset_name', type=str, help='Name of dataset', default='Tempstock')
+    parser.add_argument('-dn', '--dataset_name', type=str, help='Name of dataset', default='tempstock')
     parser.add_argument('-tr', '--track', type=str2bool, help='Track with weights and biases', nargs='?', const=False, default=False)
     parser.add_argument('-pa', '--patience', type=int, help='Patience parameter for MLM training loop', default=3)
 
@@ -303,7 +296,7 @@ if __name__=='__main__':
 
     #bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
     bertweet_config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/bertweet.json', local_files_only=True)
-    bertweet = AutoModel.from_config(bertweet_config)
+    bertweet = RobertaForMaskedLM._from_config(bertweet_config)
     if(args.epoch == 0):
         # what is the reason for this flag?
         if args.hugging_face_model is True:
@@ -318,12 +311,14 @@ if __name__=='__main__':
                     vilt = ViltModel._from_config(config)
                 elif args.model_name == 'roberta_mlm':
                     config = AutoConfig.from_pretrained("/work/nlp/b.irving/nlp/src/hug/configs/roberta_mlm.json", output_hidden_states=True)
-                    model = AutoModel.from_config(config)
-                    model = roberta_mlm_wrapper(model).to(device)
+                    model = RobertaForMaskedLM._from_config(config).cuda()
         elif args.model_name == 'meant_language_encoder':
             # which are basically just robertabase embeddings
-            embeddings = bertweet.embeddings
-            model = meant_language_pretrainer(12, 768, embeddings).to(device) 
+            config = bertweet_config
+            embeddings = bertweet.roberta.embeddings
+            lm_head = bertweet.lm_head
+            # but how do you withdraw loss from frankenstein model?
+            model = meant_language_pretrainer(args.num_encoders, 768, embeddings, lm_head).to(device) 
         elif args.model_name == 'meant_vision_encoder':
             raise ValueError('Unimplemented')
         else:
@@ -385,8 +380,8 @@ if __name__=='__main__':
     tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base")
     train = mlm_dataset(train_tweets, None, tokenizer, max_length=128)
     val = mlm_dataset(val_tweets, None, tokenizer, max_length=128) 
-    train_loader = DataLoader(train, shuffle=True, batch_size=args.batch_size * args.lag, pin_memory=True)
-    val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size * args.lag, pin_memory=True)
+    train_loader = DataLoader(train, shuffle=True, batch_size=args.batch_size, pin_memory=True)
+    val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size, pin_memory=True)
     
     # then delete the data that we don't need to pass 
     del data
@@ -432,7 +427,8 @@ if __name__=='__main__':
             'lrst':args.learning_rate_scheduler_type,
             'tokenizer':tokenizer,
             'model_name':args.model_name,
-            'num_encoders':args.num_encoders
+            'num_encoders':args.num_encoders,
+            'config': config
 
     }
 

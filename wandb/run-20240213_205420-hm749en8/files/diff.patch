@@ -1,0 +1,2617 @@
+diff --git a/.in_loop.sh.swp b/.in_loop.sh.swp
+deleted file mode 100644
+index 4308de1..0000000
+Binary files a/.in_loop.sh.swp and /dev/null differ
+diff --git a/.in_loop_train.py.swo b/.in_loop_train.py.swo
+deleted file mode 100644
+index d228305..0000000
+Binary files a/.in_loop_train.py.swo and /dev/null differ
+diff --git a/.in_loop_train.py.swp b/.in_loop_train.py.swp
+deleted file mode 100644
+index fc847aa..0000000
+Binary files a/.in_loop_train.py.swp and /dev/null differ
+diff --git a/in_loop_train.py b/in_loop_train.py
+index 063f44d..f3926eb 100644
+--- a/in_loop_train.py
++++ b/in_loop_train.py
+@@ -17,13 +17,16 @@ from transformers import (
+     VisualBertModel,
+     ViltModel,
+     ViltProcessor,
++    BertModel,
+     #DebugUnderflowOverflow,
+ )
+ from datasets import load_dataset
+ from torch.nn.utils.rnn import pad_sequence
+ from torch.utils.data import DataLoader, TensorDataset, Dataset
+ sys.path.append('../meant')
+-from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, vl_BERT_Wrapper, ViltWrapper
++from meant import (meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, 
++                   vl_BERT_Wrapper, ViltWrapper, meant_language_pretrainer, 
++                   bertweet_wrapper, meant_vision_pretrainer)
+ from utils import f1_metrics
+ from torch.utils.tensorboard import SummaryWriter
+ import wandb
+@@ -36,7 +39,7 @@ from teanet import teanet
+ 
+ 
+ # detecting where nans originate from
+-torch.autograd.set_detect_anomaly(True)
++#torch.autograd.set_detect_anomaly(True)
+ 
+ torch.cuda.empty_cache()
+ torch.manual_seed(42)
+@@ -46,7 +49,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+ np_dtype = np.float64
+ 
+ # torch datatype to used for automatic mixed precision training
+-torch_dtype = torch.float32
++torch_dtype = torch.float16
+ 
+ def str2bool(v):
+     if isinstance(v, bool):
+@@ -61,28 +64,30 @@ def str2bool(v):
+ 
+ # simple class to help load the dataset
+ class customDataset(Dataset):
+-    def __init__(self, graphs, tweets, macds, labels):
++    def __init__(self, graphs, tweets, macds, attention_masks,  labels):
+         self.graphs = torch.tensor(graphs)
+         self.tweets = torch.tensor(tweets)
+         self.macds = torch.tensor(macds)
++        self.attention_masks = torch.tensor(attention_masks)
+         self.labels = torch.tensor(labels)
+ 
+     def __len__(self):
+         return len(self.labels)
+ 
+     def __getitem__(self, idx):
+-        return self.graphs[idx], self.tweets[idx], self.macds[idx], self.labels[idx]
++        return self.graphs[idx], self.tweets[idx], self.macds[idx], self.attention_masks[idx], self.labels[idx]
+ 
+ # simple class to help load the dataset
+ class customDataset_stocknet(Dataset):
+-    def __init__(self, tweets, prices, labels):
++    def __init__(self, tweets, prices, attention_masks, labels):
+         self.tweets = torch.tensor(tweets)
+         self.prices = torch.tensor(prices)
+         self.labels = torch.tensor(labels)
++        self.attention_masks = torch.tensor(attention_masks)
+     def __len__(self):
+         return len(self.labels)
+     def __getitem__(self, idx):
+-        return self.tweets[idx], self.prices[idx], self.labels[idx]
++        return self.tweets[idx], self.prices[idx], self.attention_masks[idx], self.labels[idx]
+ 
+ class meant_trainer():
+     def __init__(self, params):
+@@ -205,34 +210,40 @@ class meant_trainer():
+             print('Training model on epoch ' + str(self.epoch + ep))
+             progress_bar = tqdm(self.train_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
+             if self.dataset == 'Tempstock':
+-                for graphs, tweets, macds, target in progress_bar:
+-                    self.optimizer.zero_grad() 
+-                    # should have a separate forward pass function
++                for graphs, tweets, macds, attention_masks, target in progress_bar:
++                    # is the autocasting weird for flash attention?
+                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                         if self.model_name == 'meant':
+-                            out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device))
++                            out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device), attention_mask=attention_masks.cuda())
+                         elif self.model_name == 'meant_vision':
+                             out = model.forward(graphs.to(torch_dtype).to(device))
+                         elif self.model_name == 'meant_tweet':
+-                            out = model.forward(tweets.long().to(device))
++                            # see if this allows for better fine tuning (it should)
++                            out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
+                         elif self.model_name == 'teanet':
+                             out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
+                         else:
+                             # we run without the lag period. Only meant supports this!
+                             out = model(tweets[:, 4, :].squeeze(dim=1).to(torch.float32).cuda(), graphs[:, 4, :, :].to(torch_dtype).squeeze(dim=1).cuda())
++                        if torch.isnan(out).any():
++                            print('nans encountered. Current state of performance:')
++                            train_metrics.show()
++                            sys.exit()
+                         loss = loss_fct(out, target.to(device).long())                
++                    #loss.backward()
++                    self.optimizer.zero_grad() 
+                     scaler.scale(loss).backward()
+                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
++                    #self.optimizer.step()
+                     scaler.step(self.optimizer)
+                     scaler.update()
+                     out = out.detach().cpu()
+-                    target = target.detach().cpu()
+                     train_metrics.update(out, target) 
+                     del out
+                     del target
+                     del loss
+             elif self.dataset == 'Stocknet':
+-                for tweets, prices, target in progress_bar:
++                for tweets, prices, attention_masks, target in progress_bar:
+                     self.optimizer.zero_grad() 
+                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                         if self.model_name == 'meant':
+@@ -240,11 +251,14 @@ class meant_trainer():
+                         elif self.model_name == 'meant_vision':
+                             raise ValueError('MEANT_vision is a vision focused model, while Stocknet is a language focused dataset. Use MEANTweet.')
+                         elif self.model_name == 'meant_tweet':
+-                            out = model.forward(tweets.long().to(device))
++                            # should pass an attention mask
++                            out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
+                         elif self.model_name == 'teanet':
+                             out = model.forward(tweets.to(torch_dtype).to(device), prices.to(torch_dtype).to(device))
++                        elif self.model_name == 'bertweet' or self.model_name == 'bert' or self.model_name == 'finbert':
++                            out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda())
+                         else:
+-                            raise ValueError('Model not supported.')
++                            raise ValueError('Model not supported')
+                         loss = loss_fct(out, target.to(device).long())                
+                     scaler.scale(loss).backward()
+                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+@@ -271,30 +285,32 @@ class meant_trainer():
+             with torch.no_grad():
+                 val_progress_bar = tqdm(self.val_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
+                 if self.dataset == 'Tempstock':
+-                    for graphs, tweets, macds, target in self.val_loader:
++                    for graphs, tweets, macds, attention_masks, target in val_progress_bar:
+                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                             if self.model_name == 'meant':
+-                                out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device))
++                                out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device), attention_mask=attention_masks.cuda())
+                             elif self.model_name == 'meant_vision':
+                                 out = model.forward(graphs.to(torch_dtype).to(device))
+                             elif self.model_name == 'meant_tweet':
+-                                out = model.forward(tweets.long().to(device))
++                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
+                             elif self.model_name == 'teanet':
+                                 out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
+                             else:
+                                 out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda(), graphs[:, 4, :, :].to(torch_dtype).squeeze(dim=1).cuda())
+                         val_metrics.update(out.detach().cpu(), target) 
+                 elif self.dataset == 'Stocknet':
+-                    for tweets, prices, target in self.val_loader:
++                    for tweets, prices, attention_masks, target in val_progress_bar:
+                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                             if self.model_name == 'meant':
+                                 raise ValueError('MEANT is a multimodal model, while Stocknet is a unimodal dataset. Use MEANTweet.')
+                             elif self.model_name == 'meant_vision':
+-                                out = model.forward(graphs.to(torch_dtype).to(device))
+-                            elif self.model_name == 'meant_tweet':
+-                                out = model.forward(tweets.long().to(device))
++                                raise ValueError('MEANT-vision is a computer vision model, while Stocknet is a linguistic dataset. Use MEANTweet.')
++                            elif self.model_name == 'meant_tweet': 
++                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
+                             elif self.model_name == 'teanet':
+-                                out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
++                                out = model.forward(tweets.to(torch_dtype).to(device), prices.to(torch_dtype).to(device))
++                            elif self.model_name == 'bertweet' or self.model_name == 'bert' or self.model_name == 'finbert':
++                                out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda())
+                             else:
+                                 raise ValueError('Model not supported.')
+                         val_metrics.update(out.detach().cpu(), target) 
+@@ -312,9 +328,9 @@ class meant_trainer():
+                     patience = 0
+                 prev_f1 = val_f1_macro
+         try:
+-            torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
+-            torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
+-            torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
++            torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + str(self.run_id) + '_' + str(final_epoch + 1) + '.pt')
++            #torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
++            #torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
+         except FileNotFoundError:
+             print('Your filepath is invalid. Save has failed')
+ 
+@@ -325,30 +341,35 @@ class meant_trainer():
+             f1_scores = []
+             with torch.no_grad():
+                 if self.dataset == 'Tempstock':
+-                    for graphs, tweets, macds, target in self.test_loader:
++                    for graphs, tweets, macds, attention_masks, target in self.test_loader:
++                        # the autocasting doesn't work with flash attention? Examine bug
++                        # why doesn't this stuff work? What is the problem?????
++                        # let it rip
+                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                             if self.model_name == 'meant':
+                                 out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device))
+                             elif self.model_name == 'meant_vision':
+                                 out = model.forward(graphs.to(torch_dtype).to(device))
+                             elif self.model_name == 'meant_tweet':
+-                                out = model.forward(tweets.long().to(device))
++                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.to(device))
+                             elif self.model_name == 'teanet':
+                                 out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
+                             else:
+                                 out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda(), graphs[:, 4, :, :].to(torch_dtype).squeeze(dim=1).cuda())
+                         test_metrics.update(out.detach().cpu(), target) 
+                 elif self.dataset == 'Stocknet':
+-                    for tweets, prices, target in self.test_loader:
++                    for tweets, prices, attention_masks, target in self.test_loader:
+                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                             if self.model_name == 'meant':
+                                 raise ValueError('MEANT is a multimodal model, while Stocknet is a unimodal dataset. Use MEANTweet.')
+                             elif self.model_name == 'meant_vision':
+                                 raise ValueError('MEANT_vision is a vision focused model, while Stocknet is a language focused dataset. Use MEANTweet.')
+-                            elif self.model_name == 'meant_tweet':
+-                                out = model.forward(tweets.long().to(device))
++                            elif self.model_name == 'meant_tweet' or self.model_name == 'bertweet':
++                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
+                             elif self.model_name == 'teanet':
+                                 out = model.forward(tweets.to(torch_dtype).to(device), prices.to(torch_dtype).to(device))
++                            elif self.model_name == 'bertweet' or self.model_name == 'bert' or self.model_name == 'finbert':
++                                out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda())
+                             else:
+                                 raise ValueError('Model not supported.')
+                         test_metrics.update(out.detach().cpu(), target) 
+@@ -376,7 +397,7 @@ if __name__=='__main__':
+ 
+     # Training loop 
+     parser.add_argument('-e', '--epoch', type = int, help = 'Current epoch at start of training', default=0)
+-    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=1)
++    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=10)
+     parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=False, default=False)
+     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
+     parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 16)
+@@ -423,12 +444,14 @@ if __name__=='__main__':
+                 model = AutoModelForTokenClassification.from_pretrained(args.hugging_face_model).to(device)
+             else: 
+                 print('Training model from scratch')
+-                config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                 if args.model_name == 'vl_bert':
+                     # use pretrained model for TESTING 
+                     #vl_bert_model = VisualBertModel._from_config(config).cuda()
+                     # using pretrained VisualBERT
+                     # rerun these experiments
++                    # fuck it lets move on
++
++                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                     vl_bert_model = VisualBertModel.from_pretrained("uclanlp/visualbert-vqa-coco-pre")
+                     vl_bert_model.embeddings.word_embeddings = bertweet.embeddings.word_embeddings
+                     model = vl_BERT_Wrapper(vl_bert_model, 768, 2).cuda()
+@@ -437,9 +460,26 @@ if __name__=='__main__':
+                     #vilt = ViltModel._from_config(config)
+                     # using pretrained ViLT
+                     # rerun these experiments
++
++                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                     vilt = ViltModel.from_pretrained("dandelin/vilt-b32-mlm")
+                     vilt.embeddings.text_embeddings.word_embeddings = bertweet.embeddings.word_embeddings
+                     model = ViltWrapper(vilt, 768, 2).to(device) 
++                elif args.model_name == 'bertweet':
++
++                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
++                    model = bertweet_wrapper(bertweet, 768, 2).to(device)
++                elif args.model_name == 'bert':
++                    model = BertModel.from_pretrained("bert-base-uncased").cuda()
++                    model = bertweet_wrapper(model, 768, 2)
++                    model.bertweet.embeddings = bertweet.embeddings
++                    model = model.cuda()
++                elif args.model_name == 'finbert':
++                    # we use the bertweet embeddings because that is how the tweets were prepared
++                    fin_bert = AutoModel.from_pretrained('ProsusAI/finbert')
++                    model = bertweet_wrapper(fin_bert, 768, 2)
++                    model.bertweet.embeddings = bertweet.embeddings
++                    model = model.cuda()
+         elif args.model_name == 'meant':
+             # do we need the embedding layer if we have already used the flair nlp embeddings?
+             model = meant(text_dim = 768, 
+@@ -451,7 +491,20 @@ if __name__=='__main__':
+                 lag = args.lag, 
+                 num_classes = args.num_classes, 
+                 embedding = bertweet.embeddings,
++                flash=False,
+                 num_encoders=args.num_encoders).to(device)
++            if args.num_encoders == 12:
++                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
++            elif args.num_encoders == 24:
++                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
++            elif args.num_encoders == 1:
++                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
++            pretrained_vision = torch.load('/work/nlp/b.irving/meant_runs/models/meant_vision_encoder/meant_vision_encoder_Tempstock_0.pt').to(device)
++            model.languageEncoders = language_encoders.languageEncoders
++            model.visionEncoders = pretrained_vision.visionEncoders
++            del pretrained_vision
++            del language_encoders
++            gc.collect()
+         elif args.model_name == 'meant_vision':
+             model = meant_vision(
+                 image_dim = 768, 
+@@ -461,14 +514,25 @@ if __name__=='__main__':
+                 patch_res = 16, 
+                 lag = args.lag, 
+                 num_classes = args.num_classes, 
++                flash=True, 
+                 num_encoders=args.num_encoders).to(device)
+         elif args.model_name == 'meant_tweet':
+             model = meant_tweet(text_dim = 768, 
+                 price_dim = 4, 
+                 lag = args.lag, 
+                 num_classes = args.num_classes, 
++                flash=True,
+                 embedding = bertweet.embeddings,
+                 num_encoders=args.num_encoders).to(device) 
++            if args.num_encoders == 12:
++                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
++            elif args.num_encoders == 24:
++                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
++            elif args.num_encoders == 1:
++                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
++            model.languageEncoders = language_encoders.languageEncoders
++            del language_encoders 
++            gc.collect()
+         elif args.model_name == 'teanet':
+             model = teanet(5, 128, 2, 5, 12, 10).cuda()
+         else:
+@@ -519,13 +583,14 @@ if __name__=='__main__':
+             tweets = np.ones(graphs.shape[0], 1).astype(np.float32)
+         elif args.language_only:
+             tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
++            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
+             graphs = np.ones(tweets.shape[0], 1).astype(np.float32)
+         else:
+             graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
+-            tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy')
++            tweets = np.load('/work/nlp/b.irving/stock/complete/all_original_tweets_resampled_5.npy')
++            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
+             macds = np.load('/work/nlp/b.irving/stock/complete/macds_5.npy')
+             labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')
+-
+         if args.normalize:
+             print('Normalizing data...')
+             # our memmap arrays are read-only
+@@ -540,31 +605,33 @@ if __name__=='__main__':
+             print('Data normalized.')
+ 
+         # First split: Separate out the test set
+-        graphs_train_val, graphs_test, tweets_train_val, tweets_test, macds_train_val, macds_test, y_train_val, y_test = train_test_split(
+-            graphs, tweets, macds, labels, test_size=0.2, random_state=42)
++        graphs_train_val, graphs_test, tweets_train_val, tweets_test, macds_train_val, macds_test, attention_masks_train_val, attention_masks_test, y_train_val, y_test = train_test_split(
++            graphs, tweets, macds, attention_masks, labels, test_size=0.2, random_state=42)
+ 
+         # clear up memory
+         del graphs
+         del tweets
+         del macds
+         del labels
++        del attention_masks
+         gc.collect()
+ 
+         # Second split: Split the remaining data into training and validation sets
+-        graphs_train, graphs_val, tweets_train, tweets_val, macds_train, macds_val, y_train, y_val= train_test_split(
+-            graphs_train_val, tweets_train_val, macds_train_val, y_train_val, test_size=0.25, random_state=42) 
++        graphs_train, graphs_val, tweets_train, tweets_val, macds_train, macds_val, attention_masks_train, attention_masks_val, y_train, y_val= train_test_split(
++            graphs_train_val, tweets_train_val, macds_train_val, attention_masks_train_val, y_train_val, test_size=0.25, random_state=42) 
+         
+         del macds_train_val
+         del y_train_val
+         del tweets_train_val
+         del graphs_train_val
++        del attention_masks_train_val
+         # use here, because a signficant amount of memory can be reclaimed
+         gc.collect()
+         
+         # create a dataLoader object
+-        train_dataset = customDataset(graphs_train, tweets_train, macds_train, y_train)
+-        val_dataset = customDataset(graphs_val, tweets_val, macds_val, y_val)
+-        test_dataset = customDataset(graphs_test, tweets_test, macds_test, y_test)
++        train_dataset = customDataset(graphs_train, tweets_train, macds_train, attention_masks_train, y_train)
++        val_dataset = customDataset(graphs_val, tweets_val, macds_val, attention_masks_val, y_val)
++        test_dataset = customDataset(graphs_test, tweets_test, macds_test, attention_masks_test, y_test)
+ 
+         # pass these to our training loop
+         train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, pin_memory=True)
+@@ -576,6 +643,11 @@ if __name__=='__main__':
+         gc.collect()
+     elif args.dataset == 'Stocknet':
+         tweets = np.load('/scratch/irving.b/stock/stocknet_tweets.npy')
++       # attention_masks = (tweets != 1).long()
++       # np.save('/scratch/irving.b/attention_masks)
++       # print(tweets[0:10])
++       # sys.exit()
++        attention_masks = np.load('/scratch/irving.b/stock/attention_masks.npy')
+         prices = np.load('/scratch/irving.b/stock/stocknet_prices.npy')
+         labels = np.load('/scratch/irving.b/stock/stocknet_labels.npy')
+         if args.normalize:
+@@ -585,25 +657,27 @@ if __name__=='__main__':
+             prices -= np.mean(prices)
+             prices/= np.std(prices)
+             print('Data normalized.')
+-        tweets_train_val, tweets_test, prices_train_val, prices_test, y_train_val, y_test = train_test_split(
+-            tweets, prices, labels, test_size=0.2, random_state=42)
++        tweets_train_val, tweets_test, prices_train_val, prices_test, attention_masks_train_val, attention_masks_test, y_train_val, y_test = train_test_split(
++            tweets, prices, attention_masks, labels, test_size=0.2, random_state=42)
+         del tweets
+         del prices 
++        del attention_masks
+         del labels
+         gc.collect()
+-        tweets_train, tweets_val, prices_train, prices_val, y_train, y_val= train_test_split(
+-            tweets_train_val, prices_train_val, y_train_val, test_size=0.25, random_state=42) 
++        tweets_train, tweets_val, prices_train, prices_val, attention_masks_train, attention_masks_val, y_train, y_val= train_test_split(
++            tweets_train_val, prices_train_val, attention_masks_train_val, y_train_val, test_size=0.25, random_state=42) 
+         del prices_train_val 
+         del y_train_val
+         del tweets_train_val
++        del attention_masks_train_val
+         gc.collect()
+-        train_dataset = customDataset_stocknet(tweets_train, prices_train, y_train)
+-        val_dataset = customDataset_stocknet(tweets_val, prices_val, y_val)
+-        test_dataset = customDataset_stocknet(tweets_test, prices_test, y_test)
++        train_dataset = customDataset_stocknet(tweets_train, prices_train, attention_masks_train, y_train)
++        val_dataset = customDataset_stocknet(tweets_val, prices_val, attention_masks_val, y_val)
++        test_dataset = customDataset_stocknet(tweets_test, prices_test, attention_masks_test, y_test)
+         train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, pin_memory=True)
+         val_loader = DataLoader(val_dataset, batch_size=args.eval_batch_size, shuffle=False, pin_memory=True)
+         test_loader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, pin_memory=True)
+-        del tweets_train, prices_train, prices_val, tweets_val, tweets_test, prices_test, y_train, y_val, y_test
++        del tweets_train, prices_train, prices_val, tweets_val, tweets_test, prices_test, y_train, y_val, y_test, attention_masks_train, attention_masks_val, attention_masks_test
+         gc.collect()
+ 
+     print('Data prepared.')
+diff --git a/meant/__init__.py b/meant/__init__.py
+index b8c71b1..b998864 100644
+--- a/meant/__init__.py
++++ b/meant/__init__.py
+@@ -3,6 +3,9 @@ from .meant import meant, languageEncoder, visionEncoder
+ from .meant_vision import meant_vision
+ from .meant_tweet import meant_tweet
+ from .meant_tweet_no_lag import meant_tweet_no_lag
++from .meant_vqa import meant_vqa
+ from .xPosAttention import xPosAttention
++from .xPosAttention_flash import xPosAttention_flash
++from .flash_attention import flash_attention
+ from .temporal import temporal
+-from .hf_wrapper import vl_BERT_Wrapper, ViltWrapper, roberta_mlm_wrapper
++from .hf_wrapper import vl_BERT_Wrapper, ViltWrapper, roberta_mlm_wrapper, bertweet_wrapper, meant_language_pretrainer, meant_vision_pretrainer
+diff --git a/meant/attention.py b/meant/attention.py
+index d8bb0a5..e5c4748 100644
+--- a/meant/attention.py
++++ b/meant/attention.py
+@@ -6,7 +6,7 @@ import torch
+ from rotary_embedding_torch import RotaryEmbedding
+ 
+ """
+-A classic attention mechanism with xPos embedding support.
++A classic attention mechanism with support for axial-2D embeddings (images)
+ """
+ class attention(nn.Module):
+ 
+@@ -33,14 +33,14 @@ class attention(nn.Module):
+         self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+         
+     def forward(self, input):
+-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
++        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.num_heads), 
+                                                         (self.q(input), self.v(input), self.k(input)))
+  
+         q_mat = self.pos_emb.rotate_queries_or_keys(q_mat)
+         k_mat = self.pos_emb.rotate_queries_or_keys(k_mat)
+ 
+         # Compute attention scores using dot product of queries and keys
+-        scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
++        scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
+ 
+         # for tracing: trace call cannot deal with control flow
+         @torch.jit.script_if_tracing
+@@ -56,7 +56,7 @@ class attention(nn.Module):
+         # Apply attention weights to values
+         inter = torch.matmul(weights, v_mat)
+         # reshape for the linear layer
+-        inter = rearrange(inter, 'b l h n d -> b l n (h d)')
++        inter = rearrange(inter, 'b h n d -> b n (h d)')
+         output = self.multi_mad(inter)
+         output = self.dropout(output)
+         return output
+diff --git a/meant/hf_wrapper.py b/meant/hf_wrapper.py
+index ff81475..a99f9b1 100644
+--- a/meant/hf_wrapper.py
++++ b/meant/hf_wrapper.py
+@@ -6,7 +6,7 @@ device = torch.device('cuda')
+ 
+ class vl_BERT_Wrapper(nn.Module):
+     def __init__(self, model, input_dim, output_dim):
+-        super(CustomClassifier, self).__init__()
++        super(vl_BERT_Wrapper, self).__init__()
+         self.model = model.to(device)
+         self.dropout = nn.Dropout(0.1)
+         self.mlp_head = nn.Sequential(nn.Linear(input_dim, output_dim), nn.Sigmoid())
+@@ -72,6 +72,27 @@ class ViltWrapper(nn.Module):
+         return logits
+ 
+ 
++class bertweet_wrapper(nn.Module):
++    def __init__(self, bertweet, input_dim, output_dim):
++        super(bertweet_wrapper, self).__init__()
++        self.bertweet = bertweet
++        self.dropout = nn.Dropout(0.1)
++        self.mlp_head = nn.Sequential(nn.LayerNorm(input_dim), nn.GELU(), nn.Linear(input_dim, output_dim), nn.Sigmoid())
++    def forward(self, tweets):
++        # pass attention mask forward
++        attention_masks = torch.tensor([[1 if token_id != 1 else 0 for token_id in seq] for seq in tweets]).cuda()
++        inputs_actually = {'input_ids':tweets, 'attention_mask':attention_masks}
++        outputs = self.bertweet(**inputs_actually)
++        # do we want to process the pooler output, or the sequence output
++        pooled_output = outputs.pooler_output
++        pooled_output = self.dropout(pooled_output)
++        logits = self.mlp_head(pooled_output)
++        return logits
++
++# so just have to use bertweet embeddings because of pretokenization?
++# YES
++#class bert_wrapper(nn.Module):
++
+ class roberta_mlm_wrapper(nn.Module):
+     def __init__(self, roberta, input_dim=768, output_dim=512):
+         """
+@@ -85,4 +106,44 @@ class roberta_mlm_wrapper(nn.Module):
+         intermediate_val = self.roberta(**inputs)
+         # project the last hidden state to the dimension of one
+         outputs = self.mlm_output_head(intermediate_val['last_hidden_state'])
+-        return outputs.squeeze(dim=2) 
+\ No newline at end of file
++        return outputs.squeeze(dim=2) 
++
++class meant_language_pretrainer(nn.Module):
++    def __init__(self, num_encoders, mlm_input_dim, embedding, lm_head, lag=5, text_dim=768, num_heads=8):
++        super(meant_language_pretrainer, self).__init__()
++        self.embedding = nn.ModuleList([embedding])
++        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=True)])
++        # my mlm head has to be the same size as the vocabulary list (come on son)
++        self.mlm_head = lm_head 
++        self.lag=lag
++
++    def forward(self, words):
++        for mod in self.embedding:
++            words = mod(words)
++        for encoder in self.languageEncoders:
++            words = encoder.forward(words)
++        return self.mlm_head(words)
++
++class meant_vision_pretrainer(nn.Module):
++    def __init__(self, num_encoders, decoder, mlm_input_dim, patch_res=16, channels = 4, height=224, width=224, image_dim=768, num_heads=8):
++        super(meant_vision_pretrainer, self).__init__()
++        self.channels = channels
++        self.patch_dim = self.channels * patch_res * patch_res
++        self.n = int((height * width) / (patch_res ** 2))
++        self.patchEmbed = nn.Sequential(
++            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
++            nn.Linear(self.patch_dim, image_dim))
++        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads, flash=True)])
++        # what sort of lm_head do we use
++        self.decoder = decoder
++
++    # I need to set up Annika's experiments, VQA, and some other things
++    def forward(self, images):
++        images = self.patchEmbed(images)
++        for encoder in self.visionEncoders:
++            images = encoder.forward(images)
++        # Reshape to (batch_size, num_channels, height, width)
++        batch_size, sequence_length, num_channels = images.shape
++        height = width = math.floor(sequence_length**0.5)
++        sequence_output = images.permute(0, 2, 1).reshape(batch_size, num_channels, height, width)
++        return self.decoder(sequence_output)
+diff --git a/meant/meant.py b/meant/meant.py
+index 1a7cf62..005a8f9 100644
+--- a/meant/meant.py
++++ b/meant/meant.py
+@@ -3,13 +3,14 @@ from torch import nn
+ from einops.layers.torch import Rearrange
+ from einops import repeat, rearrange
+ from .attention import attention
++from .flash_attention import flash_attention
+ from .xPosAttention import xPosAttention
+ from .xPosAttention_flash import xPosAttention_flash
+ from .temporal import temporal
+ from rotary_embedding_torch import RotaryEmbedding
+ import math
+ from transformers import AutoModel, AutoTokenizer
+-from utils import RMSNorm
++from utils import RMSNorm 
+ 
+ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+ # Check if CUDA is available
+@@ -32,7 +33,8 @@ MAX_SEQ_LENGTH = 3333
+ 
+ # should the vision encoder encode temporal information?
+ class visionEncoder(nn.Module):
+-    def __init__(self, dim, num_heads):
++    # we should pretrain the patch embeddings, right?
++    def __init__(self, dim, num_heads, flash=False):
+         """
+         The initial encoder for extracting relevant features from the multimodal input.
+         """
+@@ -45,10 +47,18 @@ class visionEncoder(nn.Module):
+             dim = math.floor(dim/num_heads/2),
+             freqs_for='pixel')
+         
+-        # why use the kosmos architecture
++        if flash and ampere:
++            atten = flash_attention(num_heads, dim, self.posEmbed) 
++        else:
++            if flash and not ampere and torch.cuda.is_available():
++                print(f"The {cuda_device_name} GPU is not from the Ampere series or later. Flash attention not supported.")
++            elif flash:
++                print('Cuda not supported. Cannot use flash attention.')
++            atten = attention(num_heads, dim, self.posEmbed)
++
+         self.encode = nn.ModuleList([RMSNorm(dim), 
+                                     nn.Linear(dim, dim), 
+-                                    attention(num_heads, dim, self.posEmbed), 
++                                    atten, 
+                                     RMSNorm(dim), 
+                                     nn.Linear(dim, dim)])
+         self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Linear(dim, dim)])
+@@ -66,7 +76,7 @@ class visionEncoder(nn.Module):
+ 
+ # separate encoder module, because might make changes to structure
+ class languageEncoder(nn.Module):
+-    def __init__(self, dim, num_heads, flash=False):
++    def __init__(self, dim, num_heads, dropout=0.0, flash=False):
+         """
+         Encoder to extract language inputs. Virtually identical to visual encoder, except that it utitilizes 
+         the xPos embeddings rather than the base rotary embeddings
+@@ -75,35 +85,34 @@ class languageEncoder(nn.Module):
+         self.dim = dim
+         self.num_heads = num_heads
+ 
+-        # how support xPos embeddings though?
+-        # so, the xPos embeddings will focus on the pixel case
+         self.xPos = RotaryEmbedding(
+             dim = 48,
+             use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
+             #xpos_scale_base=2
+         )
+         if flash and ampere:
+-            self.encode = nn.ModuleList([RMSNorm(dim), 
+-                                        nn.Linear(dim, dim), 
+-                                        xPosAttention_flash(num_heads, dim, self.xPos), 
+-                                        RMSNorm(dim), 
+-                                        nn.Linear(dim, dim)])
++            attention = xPosAttention_flash(num_heads, dim, self.xPos) 
+         else:
+             if flash and not ampere and torch.cuda.is_available():
+-                print(f"The GPU {cuda_device_name} is not from the Ampere series or later. Flash attention not supported")
++                print(f"The {cuda_device_name} GPU is not from the Ampere series or later. Flash attention not supported.")
+             elif flash:
+-                print('Cuda not supported. Cannot use flash attention')
+-            self.encode = self.encode = nn.ModuleList([RMSNorm(dim), 
+-                                        nn.Linear(dim, dim), 
+-                                        xPosAttention(num_heads, dim, self.xPos), 
+-                                        RMSNorm(dim), 
+-                                        nn.Linear(dim, dim)])
+-        self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Linear(dim, dim)])
++                print('Cuda not supported. Cannot use flash attention.')
++            attention = xPosAttention(num_heads, dim, self.xPos)
++        self.encode = nn.ModuleList([RMSNorm(dim), 
++                                    nn.Linear(dim, dim), 
++                                    attention, 
++                                    RMSNorm(dim), 
++                                    nn.Dropout(dropout),
++                                    nn.Linear(dim, dim)])
++        self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Dropout(), nn.Linear(dim, dim)])
+ 
+-    def forward(self, input):
++    def forward(self, input, attention_mask=None):
+         inter = input
+         for mod in self.encode:
+-            inter = mod(inter)
++            if type(mod).__name__ == 'xPosAttention':
++                inter = mod(inter, attention_mask)
++            else:
++                inter = mod(inter)
+         inter = inter + input
+         final_resid = inter
+         for mod in self.encode2:
+@@ -118,19 +127,13 @@ class temporalEncoder(nn.Module):
+         self.dim = dim
+         self.num_heads = num_heads
+ 
+-        # this is the positional embedding for the temporal encoder
+-        # does this positional encoding need to be repeated?
++        # positional encoding
+         self.temp_embedding = nn.Parameter(torch.randn(1, lag, dim))
+-
+-
+-        self.lag = lag
+-
+         self.temp_encode = nn.ModuleList([RMSNorm(dim), 
+                                             nn.Linear(dim, dim), 
+                                             temporal(num_heads, dim), 
+                                             RMSNorm(dim), 
+                                             nn.Linear(dim, dim)])
+-        
+ 
+     def forward(self, x):
+         b, l, d = x.shape
+@@ -158,7 +161,6 @@ class meant(nn.Module):
+         """
+         super(meant, self).__init__()
+ 
+-
+         # recent additions for editing purposes
+         self.lag = lag
+         self.text_dim = text_dim
+@@ -189,10 +191,10 @@ class meant(nn.Module):
+         # b = batch
+         # f = the number of frames we are processing
+         self.patchEmbed = nn.Sequential(
+-            Rearrange('b l c (h p1) (w p2) -> b l (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
++            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+             nn.Linear(self.patch_dim, image_dim))
+ 
+-        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
++        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads, flash=flash) for i in range(num_encoders)])
+         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash) for i in range(num_encoders)])
+ 
+         # so we are printing out everything in here
+@@ -201,35 +203,34 @@ class meant(nn.Module):
+         # output head
+         self.mlpHead = nn.ModuleList([RMSNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
+ 
+-        # each component has a class token
+-        self.img_classtkn = nn.Parameter(torch.randn(1, lag, 1, image_dim))
+-
+-        # how does this work with the lag period
+-        self.txt_classtkn = nn.Parameter(torch.randn(1, lag, 1, text_dim))
+-
+-        # haven't decided on this dimensionality as of yet
+-        #self.temp_classtkn = nn.Parameter(torch.randn(1, image_dim))
+-
+-    def forward(self, tweets, images):
++    def forward(self, tweets, images, attention_mask=None):
+         _batch = images.shape[0]
++
+         words = tweets.view(_batch * self.lag, tweets.shape[2])
++
+         for mod in self.embedding:
+             words = mod(words)
+ 
+-        
+-        print('word nans',torch.isnan(words).any().item())
+-          # one class token per batch input
+-        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
++        if attention_mask is not None:
++            attention_mask = attention_mask.view(_batch * self.lag, attention_mask.shape[2])
++        # perhaps change these back?
+         for encoder in self.languageEncoders:
+-            words = encoder.forward(words)
++            words = encoder.forward(words, attention_mask)
++
++        # is it rmsnorm?
++        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+ 
+-        print('encoded word nans',torch.isnan(words).any().item())
+-        image = self.patchEmbed(images)
++        images = rearrange(images, 'b l c h w -> (b l) c h w')
++        # what is the size of the image become?
++        images = self.patchEmbed(images)
+         # should I repeat for the batch
+         for encoder in self.visionEncoders:
+-            image = encoder.forward(image)
+-        # I believe this is a mistake, to use attention on the class tokens
+-        temporal = torch.cat((torch.mean(words, dim=2), torch.mean(image, dim=2)), dim = 2)
++            images = encoder.forward(images)
++
++        images = rearrange(images, '(b l) n d -> b l n d', b = _batch)
++        temporal = torch.cat((torch.mean(words, dim=2), torch.mean(images, dim=2)), dim = 2)
++
++
+         for encoder in self.temporal_encoding:
+             temporal = encoder.forward(temporal)
+         for mod in self.mlpHead:
+diff --git a/meant/meantPrice.py b/meant/meantPrice.py
+deleted file mode 100644
+index 362b59e..0000000
+--- a/meant/meantPrice.py
++++ /dev/null
+@@ -1,210 +0,0 @@
+-import torch
+-from torch import nn
+-from einops.layers.torch import Rearrange
+-from einops import repeat, rearrange
+-from attention import attention
+-from xPosAttention import xPosAttention
+-from temporal import temporal
+-from rotary_embedding_torch import RotaryEmbedding
+-import math
+-from transformers import AutoModel, AutoTokenizer
+-
+-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+-
+-# okay, lets run these experiments
+-# because
+-MAX_SEQ_LENGTH = 3333
+-
+-# should the vision encoder encode temporal information?
+-class visionEncoder(nn.Module):
+-    def __init__(self, dim, num_heads):
+-        """
+-        The initial encoder for extracting relevant features from the multimodal input.
+-        """
+-        super(visionEncoder, self).__init__()
+-        self.dim = dim
+-        self.num_heads = num_heads
+-
+-        # so, the xPos embeddings will focus on the pixel case
+-        self.posEmbed = RotaryEmbedding(
+-        dim = math.floor(dim/num_heads/2),
+-        freqs_for='pixel')
+-        self.encode = nn.ModuleList([nn.LayerNorm(dim), 
+-                                    nn.Linear(dim, dim), 
+-                                    attention(num_heads, dim, self.posEmbed), 
+-                                    nn.LayerNorm(dim), 
+-                                    nn.Linear(dim, dim)])
+-        self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim, dim)])
+-
+-    def forward(self, input):
+-        inter = input
+-        for mod in self.encode:
+-            inter = mod(inter)
+-        inter = inter + input
+-        final_resid = inter
+-        for mod in self.encode2:
+-            inter = mod(inter)
+-        # then another residual connection before the output is processed
+-        return inter + final_resid
+-
+-# separate encoder module, because might make changes to structure
+-# should we have temporal encoding baked into each encoder?
+-class languageEncoder(nn.Module):
+-    def __init__(self, dim, num_heads):
+-        """
+-        Encoder to extract language inputs. Virtually identical to visual encoder, except that it utitilizes 
+-        the xPos embeddings rather than the base rotary embeddings
+-        """
+-        super(languageEncoder, self).__init__()
+-        self.dim = dim
+-        self.num_heads = num_heads
+-
+-        # so, the xPos embeddings will focus on the pixel case
+-        self.xPos = RotaryEmbedding(
+-            dim = 48,
+-            use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
+-            #xpos_scale_base=2
+-        )
+-
+-        self.encode = nn.ModuleList([nn.LayerNorm(dim), 
+-                                    nn.Linear(dim, dim), 
+-                                    xPosAttention(num_heads, dim, self.xPos), 
+-                                    nn.LayerNorm(dim), 
+-                                    nn.Linear(dim, dim)])
+-        self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim, dim)])
+-
+-    def forward(self, input):
+-        inter = input
+-        for mod in self.encode:
+-            inter = mod(inter)
+-        inter = inter + input
+-        final_resid = inter
+-        for mod in self.encode2:
+-            inter = mod(inter)
+-        return inter + final_resid
+-
+-
+-
+-class temporalEncoder(nn.Module):
+-    def __init__(self, dim, num_heads, lag):
+-        super(temporalEncoder, self).__init__()
+-        self.dim = dim
+-        self.num_heads = num_heads
+-        self.n = 196
+-
+-        # this is the positional embedding for the temporal encoder
+-        self.temp_embedding = nn.Parameter(torch.randn(1, lag, dim))
+-        self.lag = lag
+-        self.temp_encode = nn.ModuleList([#nn.LayerNorm(dim), 
+-                                            nn.Linear(dim, dim).float(), 
+-                                            temporal(num_heads, dim).float(), 
+-                                            #nn.LayerNorm(dim), 
+-                                            nn.Linear(dim, dim).float()])
+-
+-    def forward(self, x):
+-        b, l, d = x.shape
+-        temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
+-        x += temp_embed
+-       # x = x.double()
+-        count = 0
+-        for mod in self.temp_encode:
+-            #print(x.dtype)
+-            #print(count)            
+-            x = mod(x)
+-            count+=1
+-        return x
+-
+-
+-class meant(nn.Module):
+-    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
+-        """
+-        Args
+-            dim: The dimension of the input to the encoder
+-            num_heads: The number of attention heads for the attention mechanism
+-            height: The height of the images being processed
+-            width: The width of the images being processed
+-            patch_res: The dimension of each image patch
+-            channels: The number of channels in the images being processed
+-            num_classes: The number of classes for the mlp output head
+-        
+-        returns: A classification vector, of size num_classes
+-        """
+-        super(meant, self).__init__()
+-        
+-        # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
+-        self.dim = text_dim + image_dim + price_dim
+-        self.num_heads = num_heads
+-
+-        # for the image component of the encoder
+-        self.channels = channels
+-        self.patch_dim = self.channels * patch_res * patch_res
+-        self.n = int((height * width) / (patch_res ** 2))
+-
+-        # pretrained language embedding from hugging face model
+-        self.embedding = nn.ModuleList([embedding])
+-
+-        # classification token for the image component. Will be passed to the temporal attention mechanism
+-        #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
+-
+-        # the patch embedding for the image
+-        # we have to apply it to every image in the lag period
+-        # c = channel
+-        # h = height
+-        # w = width
+-        # b = batch
+-        # l = lag period (how many images are being processed for each input)
+-        self.patchEmbed = nn.Sequential(
+-            Rearrange('b l c (h p1) (w p2) -> b l (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+-            nn.Linear(self.patch_dim, image_dim),)
+-
+-        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
+-        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
+-
+-        # why is this fucked up
+-        self.temporal_encoding = nn.ModuleList([temporalEncoder(1540, num_heads, lag)])
+-
+-        # output head
+-        self.mlpHead = nn.ModuleList([nn.LayerNorm(1540), nn.Linear(1540, num_classes), nn.Sigmoid()])
+-
+-        # each component has a class token
+-        self.img_classtkn = nn.Parameter(torch.randn(1, lag, 1, image_dim))
+-
+-        # how does this work with the lag period
+-        self.txt_classtkn = nn.Parameter(torch.randn(1, lag, 1, text_dim))
+-
+-        # haven't decided on this dimensionality as of yet
+-        #self.temp_classtkn = nn.Parameter(torch.randn(1, image_dim))
+-
+-    def forward(self, tweets, images, prices):
+-        _batch = images.shape[0]
+-
+-        # embed multiple days of information with a forloop
+-        words = tweets
+-        for mod in self.embedding:
+-            words = mod(words)
+-
+-        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+-        txt_classtkn = repeat(self.txt_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
+-        words = torch.cat((txt_classtkn, words), dim = 2)
+-        for encoder in self.languageEncoders:
+-            words = encoder.forward(words)
+-
+-        image = self.patchEmbed(images)
+-
+-        img_classtkn = repeat(self.img_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
+-        image = torch.cat((img_classtkn, image), dim = 2)
+-        for encoder in self.visionEncoders:
+-            image = encoder.forward(image)
+-
+-        
+-        # then we take the class tokens from both encoders
+-        temporal_input = torch.cat((words[:, :, 0, :], image[:, :, 0, :], prices), dim = 2)
+-        temporal_input = temporal_input.to(torch.float32)
+-        # we process the concatenated classification tokens
+-        #output = self.temporal_encoding(temporal_input).view(_batch, 1541)
+-        for encoder in self.temporal_encoding:
+-            output = encoder.forward(temporal_input)
+-        # we process temporal output
+-        for mod in self.mlpHead:
+-            output = mod(output)
+-        return output
+diff --git a/meant/meant_tweet.py b/meant/meant_tweet.py
+index 7b42faf..7c260a5 100644
+--- a/meant/meant_tweet.py
++++ b/meant/meant_tweet.py
+@@ -4,11 +4,14 @@ from torch import nn
+ from einops.layers.torch import Rearrange
+ from einops import repeat, rearrange
+ from .attention import attention
++from .flash_attention import flash_attention
+ from .xPosAttention import xPosAttention
++from .xPosAttention_flash import xPosAttention_flash
+ from .temporal import temporal
+ from rotary_embedding_torch import RotaryEmbedding
+ import math
+ from transformers import AutoModel, AutoTokenizer
++from utils import RMSNorm
+ 
+ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+ 
+@@ -19,13 +22,22 @@ MAX_SEQ_LENGTH = 3333
+ # separate encoder module, because might make changes to structure
+ # should we have temporal encoding baked into each encoder?
+ 
++# Check if CUDA is available
++if torch.cuda.is_available():
++    # Get the name of the CUDA device
++    cuda_device_name = torch.cuda.get_device_name(0)
+ 
+-
+-# for science: try without the lag period
+-# see if you can bump performance in any positive direction
++    # Check if the device name contains "Ampere" or a later architecture
++    if "Ampere" in cuda_device_name or "A100" in cuda_device_name:
++        ampere = True
++    else:
++        ampere = False
++else:
++    print("CUDA is not available on this system.")
++    ampere = False
+ 
+ class languageEncoder(nn.Module):
+-    def __init__(self, dim, num_heads):
++    def __init__(self, dim, num_heads, dropout=0.0, flash=False):
+         """
+         Encoder to extract language inputs. Virtually identical to visual encoder, except that it utitilizes 
+         the xPos embeddings rather than the base rotary embeddings
+@@ -34,31 +46,39 @@ class languageEncoder(nn.Module):
+         self.dim = dim
+         self.num_heads = num_heads
+ 
+-        # so, the xPos embeddings will focus on the pixel case
+         self.xPos = RotaryEmbedding(
+             dim = 48,
+             use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
+             #xpos_scale_base=2
+         )
+-
+-        # lets try with normal positional encodings
+-
+-        self.encode = nn.ModuleList([nn.LayerNorm(dim), 
++        if flash and ampere:
++            attention = xPosAttention_flash(num_heads, dim, self.xPos) 
++        else:
++            if flash and not ampere and torch.cuda.is_available():
++                print(f"The {cuda_device_name} GPU is not from the Ampere series or later. Flash attention not supported.")
++            elif flash:
++                print('Cuda not supported. Cannot use flash attention.')
++            attention = xPosAttention(num_heads, dim, self.xPos)
++        self.encode = nn.ModuleList([RMSNorm(dim), 
+                                     nn.Linear(dim, dim), 
+-                                    xPosAttention(num_heads, dim, self.xPos), 
+-                                    nn.LayerNorm(dim), 
++                                    attention, 
++                                    RMSNorm(dim), 
++                                    nn.Dropout(dropout),
+                                     nn.Linear(dim, dim)])
+-        self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim, dim)])
++        self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Dropout(), nn.Linear(dim, dim)])
+ 
+-    def forward(self, input):
++    def forward(self, input, attention_mask=None):
+         inter = input
+         for mod in self.encode:
+-            inter = mod(inter)
++            if type(mod).__name__ == 'xPosAttention':
++                inter = mod(inter, attention_mask)
++            else:
++                inter = mod(inter)
+         inter = inter + input
+         final_resid = inter
+         for mod in self.encode2:
+             inter = mod(inter)
+-        return inter + final_resid
++        return inter + final_resi
+ 
+ # how does this scale to deal with an arbitrary lag period
+ # lets make this multimodal temporal model, shall we?
+@@ -92,7 +112,7 @@ class temporalEncoder(nn.Module):
+ 
+ # the meant model without image inputs
+ class meant_tweet(nn.Module):
+-    def __init__(self, text_dim, price_dim, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
++    def __init__(self, text_dim, price_dim, lag, num_classes, embedding, flash=False, num_heads=8, num_encoders = 1, channels=4):
+         """
+         Args
+             dim: The dimension of the input to the encoder
+@@ -116,7 +136,7 @@ class meant_tweet(nn.Module):
+         self.embedding = nn.ModuleList([embedding])
+ 
+         # classification token for the image component. Will be passed to the temporal attention mechanism
+-        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads) for i in range(num_encoders)])
++        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash) for i in range(num_encoders)])
+         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)])
+ 
+         # output head
+@@ -124,19 +144,15 @@ class meant_tweet(nn.Module):
+ 
+         self.lag = lag
+ 
+-    def forward(self, tweets):
++    def forward(self, tweets, attention_mask=None):
+         _batch = tweets.shape[0]
+         words = tweets.view(_batch * self.lag, tweets.shape[2])
++        attention_mask = attention_mask.view(_batch * self.lag, attention_mask.shape[2])
+         for mod in self.embedding:
+             words = mod(words)
+-        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+-
+-        #txt_classtkn = repeat(self.txt_classtkn, '1 l 1 d -> b l 1 d', b = _batch)
+-        #words = torch.cat((self.txt_classtkn, words), dim = 2)
+         for encoder in self.languageEncoders:
+-            words = encoder.forward(words)
+-
+-        # the temporal input is just  the tweet
++            words = encoder.forward(words, attention_mask=attention_mask)
++        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+         # mean pooling works way better
+         temporal = torch.mean(words, dim=2)
+ 
+diff --git a/meant/meant_v2.py b/meant/meant_v2.py
+deleted file mode 100644
+index ba964e5..0000000
+--- a/meant/meant_v2.py
++++ /dev/null
+@@ -1,231 +0,0 @@
+-import torch
+-from torch import nn
+-from einops.layers.torch import Rearrange
+-from einops import repeat, rearrange
+-from .attention import attention
+-from .xPosAttention import xPosAttention
+-from .xPosAttention_flash import xPosAttention_flash
+-from .temporal import temporal
+-from rotary_embedding_torch import RotaryEmbedding
+-import math
+-from transformers import AutoModel, AutoTokenizer
+-from utils import RMSNorm
+-
+-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+-
+-# okay, lets run these experiments
+-# because
+-MAX_SEQ_LENGTH = 3333
+-
+-# should the vision encoder encode temporal information?
+-class visionEncoder(nn.Module):
+-    def __init__(self, dim, num_heads):
+-        """
+-        The initial encoder for extracting relevant features from the multimodal input.
+-        """
+-        super(visionEncoder, self).__init__()
+-        self.dim = dim
+-        self.num_heads = num_heads
+-
+-        # so, the xPos embeddings will focus on the pixel case
+-        self.posEmbed = RotaryEmbedding(
+-            dim = math.floor(dim/num_heads/2),
+-            freqs_for='pixel')
+-        
+-        # why use the kosmos architecture
+-        self.encode = nn.ModuleList([RMSNorm(dim), 
+-                                    nn.Linear(dim, dim), 
+-                                    attention(num_heads, dim, self.posEmbed), 
+-                                    RMSNorm(dim), 
+-                                    nn.Linear(dim, dim)])
+-        self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Linear(dim, dim)])
+-
+-    def forward(self, input):
+-        inter = input
+-        for mod in self.encode:
+-            inter = mod(inter)
+-        inter = inter + input
+-        final_resid = inter
+-        for mod in self.encode2:
+-            inter = mod(inter)
+-        # then another residual connection before the output is processed
+-        return inter + final_resid
+-
+-class languageEncoder_v2(nn.Module):
+-    def __init__(self, dim, num_heads, embeddings=None):
+-        """
+-        Encoder to extract language inputs. Virtually identical to visual encoder, except that it utitilizes 
+-        the xPos embeddings rather than the base rotary embeddings
+-        """
+-        super(languageEncoder, self).__init__()
+-        self.dim = dim
+-        self.num_heads = num_heads
+-
+-        # should we remove the positional encoding?
+-        self.embeddings = embeddings
+-
+-        # so, the xPos embeddings will focus on the pixel case
+-        self.xPos = RotaryEmbedding(
+-            dim = 48,
+-            use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
+-            #xpos_scale_base=2
+-        )
+-
+-        self.encode = nn.ModuleList([RMSNorm(dim), 
+-                                    nn.Linear(dim, dim), 
+-                                    xPosAttention_flash(num_heads, dim, self.xPos), 
+-                                    RMSNorm(dim), 
+-                                    nn.Linear(dim, dim)])
+-        self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Linear(dim, dim)])
+-
+-    def forward(self, words):
+-        # if you put the embeddings in here, you can't stack the encoders
+-        # the problem is that we stack embeddings?
+-        if embeddings is not None:
+-            for mod in self.embeddings:
+-                words = mod(words)
+-            words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+-        else:
+-            inter = words 
+-        for mod in self.encode:
+-            inter = mod(inter)
+-        inter = inter + words
+-        final_resid = inter
+-        for mod in self.encode2:
+-            inter = mod(inter)
+-        return inter + final_resid
+-
+-# how does this scale to deal with an arbitrary lag period
+-# lets make this multimodal temporal model, shall we?
+-class temporalEncoder(nn.Module):
+-    def __init__(self, dim, num_heads, lag):
+-        super(temporalEncoder, self).__init__()
+-        self.dim = dim
+-        self.num_heads = num_heads
+-
+-        # this is the positional embedding for the temporal encoder
+-        # does this positional encoding need to be repeated?
+-        self.temp_embedding = nn.Parameter(torch.randn(1, lag, dim))
+-
+-
+-        self.lag = lag
+-
+-        self.temp_encode = nn.ModuleList([RMSNorm(dim), 
+-                                            nn.Linear(dim, dim), 
+-                                            temporal(num_heads, dim), 
+-                                            RMSNorm(dim), 
+-                                            nn.Linear(dim, dim)])
+-        
+-
+-    def forward(self, x):
+-        b, l, d = x.shape
+-        # the repeated temporal embedding is not good
+-        temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
+-        x += temp_embed
+-        for mod in self.temp_encode:           
+-            x = mod(x)
+-        return x
+-
+-
+-class meant_v2(nn.Module):
+-    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding, num_heads= 8, num_encoders = 1, channels=4):
+-        """
+-        Args
+-            dim: The dimension of the input to the encoder
+-            num_heads: The number of attention heads for the attention mechanism
+-            height: The height of the images being processed
+-            width: The width of the images being processed
+-            patch_res: The dimension of each image patch
+-            channels: The number of channels in the images being processed
+-            num_classes: The number of classes for the mlp output head
+-        
+-        returns: A classification vector, of size num_classes
+-        """
+-        super(meant_v2, self).__init__()
+-
+-
+-        # recent additions for editing purposes
+-        self.lag = lag
+-        self.text_dim = text_dim
+-        self.image_dim = image_dim
+-
+-        # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
+-        self.dim = text_dim + image_dim 
+-        self.num_heads = num_heads
+-
+-        # for the image component of the encoder
+-        self.channels = channels
+-        self.patch_dim = self.channels * patch_res * patch_res
+-        self.n = int((height * width) / (patch_res ** 2))
+-
+-        # pretrained language embedding from hugging face model
+-        # what if we have already used the flair embeddings
+-        self.embedding = nn.ModuleList([embedding])
+-        #self.embedding_alt = nn.Linear(1, 768)
+-
+-        # classification token for the image component. Will be passed to the temporal attention mechanism
+-        #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
+-
+-        # the patch embedding for the image
+-        # we have to apply it to every image in the lag period
+-        # c = channel
+-        # h = height
+-        # w = width
+-        # b = batch
+-        # f = the number of frames we are processing
+-        self.patchEmbed = nn.Sequential(
+-            Rearrange('b l c (h p1) (w p2) -> b l (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+-            nn.Linear(self.patch_dim, image_dim))
+-
+-        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
+-
+-        # now the languageEncoders are an entirely separate module
+-        # we can save the whole module list?
+-        self.languageEncoders = nn.ModuleList([
+-            languageEncoder(text_dim, num_heads, embeddings=embedding) if i == 0 else languageEncoder(text_dim, num_heads)
+-            for i in range(num_encoders)
+-        ])
+-        # so we are printing out everything in here
+-        self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)])
+-
+-        # output head
+-        self.mlpHead = nn.ModuleList([RMSNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
+-
+-        # each component has a class token
+-        self.img_classtkn = nn.Parameter(torch.randn(1, lag, 1, image_dim))
+-
+-        # how does this work with the lag period
+-        self.txt_classtkn = nn.Parameter(torch.randn(1, lag, 1, text_dim))
+-
+-        # haven't decided on this dimensionality as of yet
+-        #self.temp_classtkn = nn.Parameter(torch.randn(1, image_dim))
+-
+-    def forward(self, tweets, images):
+-        _batch = images.shape[0]
+-
+-        # should this all be contained inside the language encoder?
+-        # depends on pretraining scheme of choice
+-        words = tweets.view(_batch * self.lag, tweets.shape[2])
+-        # then read our encoder input 
+-        for encoder in self.languageEncoders:
+-            words = encoder.forward(words)
+-        
+-        # we should do the same with the vision encoder (for pretraining)
+-        image = self.patchEmbed(images)
+-
+-        for encoder in self.visionEncoders:
+-            image = encoder.forward(image)
+-
+-        # I believe this is a mistake, to use attention on the class tokens
+-        temporal = torch.cat((torch.mean(words, dim=2), torch.mean(image, dim=2)), dim = 2)
+-
+-        for encoder in self.temporal_encoding:
+-            temporal = encoder.forward(temporal)
+-
+-        if torch.isnan(temporal).any():
+-            raise ValueError('Nans encountered in the temporal encoder')        
+-            sys.exit()
+-
+-        for mod in self.mlpHead:
+-            temporal = mod(temporal)
+-        return temporal.squeeze(dim=1)        
+\ No newline at end of file
+diff --git a/meant/meant_vision.py b/meant/meant_vision.py
+index 048d8ea..6a117ae 100644
+--- a/meant/meant_vision.py
++++ b/meant/meant_vision.py
+@@ -1,23 +1,40 @@
+-
+ import torch
+ from torch import nn
+ from einops.layers.torch import Rearrange
+ from einops import repeat, rearrange
+ from .attention import attention
++from .flash_attention import flash_attention
+ from .xPosAttention import xPosAttention
++from .xPosAttention_flash import xPosAttention_flash
+ from .temporal import temporal
+ from rotary_embedding_torch import RotaryEmbedding
+ import math
+ from transformers import AutoModel, AutoTokenizer
++from utils import RMSNorm 
+ 
+ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+ 
+ # okay, lets run these experiments
+ MAX_SEQ_LENGTH = 3333
+ 
+-# should the vision encoder encode temporal information?
++device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++# Check if CUDA is available
++if torch.cuda.is_available():
++    # Get the name of the CUDA device
++    cuda_device_name = torch.cuda.get_device_name(0)
++
++    # Check if the device name contains "Ampere" or a later architecture
++    if "Ampere" in cuda_device_name or "A100" in cuda_device_name:
++        ampere = True
++    else:
++        ampere = False
++else:
++    print("CUDA is not available on this system.")
++    ampere = False
++
+ class visionEncoder(nn.Module):
+-    def __init__(self, dim, num_heads):
++    # we should pretrain the patch embeddings, right?
++    def __init__(self, dim, num_heads, flash=False):
+         """
+         The initial encoder for extracting relevant features from the multimodal input.
+         """
+@@ -30,13 +47,21 @@ class visionEncoder(nn.Module):
+             dim = math.floor(dim/num_heads/2),
+             freqs_for='pixel')
+         
+-        # why use the kosmos architecture
+-        self.encode = nn.ModuleList([nn.LayerNorm(dim), 
++        if flash and ampere:
++            atten = flash_attention(num_heads, dim, self.posEmbed) 
++        else:
++            if flash and not ampere and torch.cuda.is_available():
++                print(f"The {cuda_device_name} GPU is not from the Ampere series or later. Flash attention not supported.")
++            elif flash:
++                print('Cuda not supported. Cannot use flash attention.')
++            atten = attention(num_heads, dim, self.posEmbed)
++
++        self.encode = nn.ModuleList([RMSNorm(dim), 
+                                     nn.Linear(dim, dim), 
+-                                    attention(num_heads, dim, self.posEmbed), 
+-                                    nn.LayerNorm(dim), 
++                                    atten, 
++                                    RMSNorm(dim), 
+                                     nn.Linear(dim, dim)])
+-        self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim, dim)])
++        self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Linear(dim, dim)])
+ 
+     def forward(self, input):
+         inter = input
+@@ -80,7 +105,7 @@ class temporalEncoder(nn.Module):
+         return x
+ 
+ class meant_vision(nn.Module):
+-    def __init__(self, image_dim, price_dim, height, width, patch_res, lag, num_classes, num_heads= 8, num_encoders = 1, channels=4):
++    def __init__(self, image_dim, price_dim, height, width, patch_res, lag, num_classes, flash=False, num_heads= 8, num_encoders = 1, channels=4):
+         """
+         Args
+             dim: The dimension of the input to the encoder
+@@ -110,12 +135,11 @@ class meant_vision(nn.Module):
+         # h = height
+         # w = width
+         # b = batch
+-        # f = the number of frames we are processing
+         self.patchEmbed = nn.Sequential(
+-            Rearrange('b f c (h p1) (w p2) -> b f (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+-            nn.Linear(self.patch_dim, image_dim, dtype=torch.float32),)
++            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
++            nn.Linear(self.patch_dim, image_dim))
+ 
+-        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
++        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads, flash=flash) for i in range(num_encoders)])
+ 
+         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)]).to(torch.float32)
+ 
+@@ -127,19 +151,15 @@ class meant_vision(nn.Module):
+ 
+     def forward(self, images):
+ 
+-        # the datatype correction depends on the system?
+-        image = self.patchEmbed(images)
+-
++        _batch = images.shape[0]
++        images = rearrange(images, 'b l c h w -> (b l) c h w')
++        images = self.patchEmbed(images)
+         for encoder in self.visionEncoders:
+-            image = encoder.forward(image)
+-
+-        # then we take the class tokens from both encoders
+-        temporal_input = torch.mean(image, dim=2)
+-        temporal = temporal_input
+-
++            images = encoder.forward(images)
++        images = rearrange(images, '(b l) n d -> b l n d', b = _batch)
++        temporal = torch.mean(images, dim=2)
+         for encoder in self.temporal_encoding:
+             temporal = encoder.forward(temporal)
+-        # we process temporal output
+         for mod in self.mlpHead:
+             temporal = mod(temporal)
+         return temporal.squeeze(dim=1)        
+diff --git a/meant/rotary_embedding_torch.py b/meant/rotary_embedding_torch.py
+deleted file mode 100644
+index 5762779..0000000
+--- a/meant/rotary_embedding_torch.py
++++ /dev/null
+@@ -1,147 +0,0 @@
+-from math import pi, log
+-import torch
+-from torch import nn, einsum
+-from einops import rearrange, repeat
+-
+-# courtesy of Phil Wang
+-
+-def exists(val):
+-    return val is not None
+-
+-def broadcat(tensors, dim = -1):
+-    num_tensors = len(tensors)
+-    shape_lens = set(list(map(lambda t: len(t.shape), tensors)))
+-    assert len(shape_lens) == 1, 'tensors must all have the same number of dimensions'
+-    shape_len = list(shape_lens)[0]
+-
+-    dim = (dim + shape_len) if dim < 0 else dim
+-    dims = list(zip(*map(lambda t: list(t.shape), tensors)))
+-
+-    expandable_dims = [(i, val) for i, val in enumerate(dims) if i != dim]
+-    assert all([*map(lambda t: len(set(t[1])) <= 2, expandable_dims)]), 'invalid dimensions for broadcastable concatentation'
+-    max_dims = list(map(lambda t: (t[0], max(t[1])), expandable_dims))
+-    expanded_dims = list(map(lambda t: (t[0], (t[1],) * num_tensors), max_dims))
+-    expanded_dims.insert(dim, (dim, dims[dim]))
+-    expandable_shapes = list(zip(*map(lambda t: t[1], expanded_dims)))
+-    tensors = list(map(lambda t: t[0].expand(*t[1]), zip(tensors, expandable_shapes)))
+-    return torch.cat(tensors, dim = dim)
+-
+-# rotary embedding helper functions
+-
+-def rotate_half(x):
+-    x = rearrange(x, '... (d r) -> ... d r', r = 2)
+-    x1, x2 = x.unbind(dim = -1)
+-    x = torch.stack((-x2, x1), dim = -1)
+-    return rearrange(x, '... d r -> ... (d r)')
+-
+-def apply_rotary_emb(freqs, t, start_index = 0, scale = 1.):
+-    freqs = freqs.to(t)
+-    rot_dim = freqs.shape[-1]
+-    end_index = start_index + rot_dim
+-    assert rot_dim <= t.shape[-1], f'feature dimension {t.shape[-1]} is not of sufficient size to rotate in all the positions {rot_dim}'
+-    t_left, t, t_right = t[..., :start_index], t[..., start_index:end_index], t[..., end_index:]
+-    t = (t * freqs.cos() * scale) + (rotate_half(t) * freqs.sin() * scale)
+-    return torch.cat((t_left, t, t_right), dim = -1)
+-
+-# learned rotation helpers
+-
+-def apply_learned_rotations(rotations, t, start_index = 0, freq_ranges = None):
+-    if exists(freq_ranges):
+-        rotations = einsum('..., f -> ... f', rotations, freq_ranges)
+-        rotations = rearrange(rotations, '... r f -> ... (r f)')
+-
+-    rotations = repeat(rotations, '... n -> ... (n r)', r = 2)
+-    return apply_rotary_emb(rotations, t, start_index = start_index)
+-
+-# classes
+-
+-class RotaryEmbedding(nn.Module):
+-    def __init__(
+-        self,
+-        dim,
+-        custom_freqs = None,
+-        freqs_for = 'lang',
+-        theta = 10000,
+-        max_freq = 10,
+-        num_freqs = 1,
+-        learned_freq = False,
+-        use_xpos = False,
+-        xpos_scale_base = 512,
+-    ):
+-        super().__init__()
+-        if exists(custom_freqs):
+-            freqs = custom_freqs
+-        elif freqs_for == 'lang':
+-            freqs = 1. / (theta ** (torch.arange(0, dim, 2)[:(dim // 2)].float() / dim))
+-        elif freqs_for == 'pixel':
+-            freqs = torch.linspace(1., max_freq / 2, dim // 2) * pi
+-        elif freqs_for == 'constant':
+-            freqs = torch.ones(num_freqs).float()
+-        else:
+-            raise ValueError(f'unknown modality {freqs_for}')
+-
+-        self.cache = dict()
+-        self.cache_scale = dict()
+-        self.freqs = nn.Parameter(freqs, requires_grad = learned_freq)
+-
+-        self.use_xpos = use_xpos
+-        if not use_xpos:
+-            self.register_buffer('scale', None)
+-            return
+-
+-        scale = (torch.arange(0, dim, 2) + 0.4 * dim) / (1.4 * dim)
+-        self.scale_base = xpos_scale_base
+-        self.register_buffer('scale', scale)
+-
+-    def rotate_queries_or_keys(self, t, seq_dim = -2):
+-        assert not self.use_xpos, 'you must use `.rotate_queries_and_keys` method instead and pass in both queries and keys, for length extrapolatable rotary embeddings'
+-        device, seq_len = t.device, t.shape[seq_dim]
+-        freqs = self.forward(lambda: torch.arange(seq_len, device = device), cache_key = seq_len)
+-        return apply_rotary_emb(freqs, t)
+-
+-    def rotate_queries_and_keys(self, q, k, seq_dim = -2):
+-        assert self.use_xpos
+-        device, seq_len = q.device, q.shape[seq_dim]
+-        seq = torch.arange(seq_len, device = device)
+-        freqs = self.forward(lambda: seq, cache_key = f'freqs:{seq_len}')
+-        scale = self.get_scale(lambda: seq, cache_key = f'scale:{seq_len}')
+-        rotated_q = apply_rotary_emb(freqs, q, scale = scale)
+-        rotated_k = apply_rotary_emb(freqs, k, scale = scale ** -1)
+-        return rotated_q, rotated_k
+-
+-    def get_scale(self, t, cache_key = None):
+-        assert self.use_xpos
+-
+-        if exists(cache_key) and cache_key in self.cache:
+-            return self.cache[cache_key]
+-
+-        if callable(t):
+-            t = t()
+-
+-        scale = 1.
+-        if self.use_xpos:
+-            power = (t - len(t) // 2) / self.scale_base
+-            scale = self.scale ** rearrange(power, 'n -> n 1')
+-            scale = torch.cat((scale, scale), dim = -1)
+-
+-        if exists(cache_key):
+-            self.cache[cache_key] = scale
+-
+-        return scale
+-
+-    def forward(self, t, cache_key = None):
+-        if exists(cache_key) and cache_key in self.cache:
+-            return self.cache[cache_key]
+-
+-        if callable(t):
+-            t = t()
+-
+-        freqs = self.freqs
+-
+-        freqs = torch.einsum('..., f -> ... f', t.type(freqs.dtype), freqs)
+-        freqs = repeat(freqs, '... n -> ... (n r)', r = 2)
+-
+-        if exists(cache_key):
+-            self.cache[cache_key] = freqs
+-
+-        return freqs
+diff --git a/meant/temporal.py b/meant/temporal.py
+index 6ec2c5a..782f26b 100644
+--- a/meant/temporal.py
++++ b/meant/temporal.py
+@@ -37,6 +37,8 @@ class temporal(nn.Module):
+         # why is my entire batch returning the same output
+         q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l (h d) -> b h l d', h = self.num_heads), 
+                                                         (self.q(input[:, l - 1, :]).view(b, 1, self.atten_size), self.v(input), self.k(input)))
++
++
+         
+         # Compute attention scores using dot product of queries and keys
+         scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
+diff --git a/meant/xPosAttention.py b/meant/xPosAttention.py
+index 5d40cbb..01da28c 100644
+--- a/meant/xPosAttention.py
++++ b/meant/xPosAttention.py
+@@ -27,18 +27,18 @@ class xPosAttention(nn.Module):
+ 
+         # these weights will be initialized randomly
+         # in terms of the weights, they will eventually attend to different parts of the inputs in a similar way
+-        self.q = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+-        self.v = nn.Linear(self.dim, self.Dh * self.num_heads).float()
+-        self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
++        self.q = nn.Linear(self.dim, self.Dh * self.num_heads)
++        self.v = nn.Linear(self.dim, self.Dh * self.num_heads)
++        self.k = nn.Linear(self.dim, self.Dh * self.num_heads)
+         
+     # should the mask be passed as an input? has to be for mlm pretraining
+-    def forward(self, input):
++    def forward(self, input, attention_mask=None):
+         # what we could do instead is reshape the inputs have to allow for flash attention
+-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l s (h d) -> b l h s d', h = self.num_heads), 
++        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b s (h d) -> b h s d', h = self.num_heads), 
+                                                         (self.q(input), self.v(input), self.k(input)))
+         q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
+         # Compute attention scores using dot product of queries and keys
+-        scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
++        scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
+         # for tracing: trace call cannot deal with control flow
+         @torch.jit.script_if_tracing
+         def applyMask(scores):
+@@ -48,6 +48,13 @@ class xPosAttention(nn.Module):
+                 scores = scores.masked_fill(mask == 0, float('-inf'))
+             return scores
+         scores = applyMask(scores)
++
++        # lets see how this trains 
++        # so, we should rerun
++        if attention_mask is not None:
++            attention_mask = 1 - attention_mask.unsqueeze(1).unsqueeze(2)
++            scores = scores + attention_mask * -1e9
++
+         # apply dropout
+         scores = self.dropout(scores)
+         # Apply softmax to get attention weights
+@@ -55,6 +62,6 @@ class xPosAttention(nn.Module):
+         # Apply attention weights to values
+         inter = torch.matmul(weights, v_mat)
+         # reshape for the linear layer
+-        inter = rearrange(inter, 'b l h s d -> b l s (h d)')
++        inter = rearrange(inter, 'b h s d -> b s (h d)')
+         output = self.multi_mad(inter)
+         return output
+\ No newline at end of file
+diff --git a/meant/xPosAttention_flash.py b/meant/xPosAttention_flash.py
+index b8ecb7a..4ed993b 100644
+--- a/meant/xPosAttention_flash.py
++++ b/meant/xPosAttention_flash.py
+@@ -31,15 +31,15 @@ class xPosAttention_flash(nn.Module):
+         self.v = nn.Linear(self.dim, self.Dh * self.num_heads)
+         #self.qkv = nn.Linear(self.dim, self.Dh * self.num_heads * 3)
+ 
+-
++    # attention mask
+     def forward(self, input):
+         _batch = input.shape[0]
+-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l s (h d) -> (b l) s h d', h = self.num_heads), 
++        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b s (h d) -> b s h d', h = self.num_heads), 
+                                                         (self.q(input), self.v(input), self.k(input)))
+         # Apply out xPos rotary embeddings
+         q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
+-        scores = flash_attn_func(q_mat, k_mat, v_mat, dropout_p=0.0, softmax_scale=None, causal=True,
++        scores = flash_attn_func(q_mat, k_mat, v_mat, dropout_p=0.0, softmax_scale=None, causal=self.mask,
+                 window_size=(-1, -1), alibi_slopes=None, deterministic=False)
+-        inter = rearrange(scores, '(b l) s h d -> b l s (h d)', b=_batch)
++        inter = rearrange(scores, 'b s h d -> b s (h d)')
+         output = self.multi_mad(inter)
+         return output
+\ No newline at end of file
+diff --git a/pretrain_mlm.py b/pretrain_mlm.py
+index 70b2c58..ac8327b 100644
+--- a/pretrain_mlm.py
++++ b/pretrain_mlm.py
+@@ -30,6 +30,7 @@ from transformers import (
+     VisualBertModel,
+     ViltModel,
+     ViltProcessor,
++    RobertaForMaskedLM
+     #DebugUnderflowOverflow,
+ )
+ from datasets import load_dataset
+@@ -38,11 +39,11 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
+ from torch.utils.tensorboard import SummaryWriter
+ import pandas as pd
+ from einops import repeat, rearrange
+-from utils import mlm_dataset
+-
+ 
+ sys.path.append('../meant')
+ from meant import languageEncoder
++from utils import mlm_dataset
++
+ torch.cuda.empty_cache()
+ torch.manual_seed(42)
+ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+@@ -71,28 +72,20 @@ def str2bool(v):
+ # pretrain a word embedding or not?
+ 
+ class meant_language_pretrainer(nn.Module):
+-    def __init__(self, num_encoders, mlm_input_dim, embedding, lag=5, text_dim=768, num_heads=8):
++    def __init__(self, num_encoders, mlm_input_dim, embedding, lm_head, flash=False, lag=5, text_dim=768, num_heads=8):
+         super(meant_language_pretrainer, self).__init__()
+         self.embedding = nn.ModuleList([embedding])
+-        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=True)])
+-        self.mlm_head = nn.Sequential(nn.GELU(), nn.Linear(mlm_input_dim, 1))
++        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash) for _ in range(num_encoders)])
++        # my mlm head has to be the same size as the vocabulary list (come on son)
++        self.mlm_head = lm_head 
+         self.lag=lag
+ 
+-    def forward(self, words):
+-        # try with our own pretrained embedding
+-        _batch = words.shape[0]
+-        words = words.view(_batch * self.lag, words.shape[2])
++    def forward(self, words, attention_mask):
+         for mod in self.embedding:
+-            #print(mod)
+-            #print('word nans',torch.isnan(words).any().item())
+             words = mod(words)
+-        #print('word nans',torch.isnan(words).any().item())
+-        words = rearrange(words, '(b l) s d -> b l s d', b = _batch)
+         for encoder in self.languageEncoders:
+-            #print('word nans',torch.isnan(words).any().item())
+-            words = encoder.forward(words)
+-        #print('encoded word nans', torch.isnan(words).any().item())
+-        return self.mlm_head(words).squeeze(dim=3)
++            words = encoder.forward(words, attention_mask=attention_mask)
++        return self.mlm_head(words)
+ 
+ 
+ class mlm_pretrainer():
+@@ -121,6 +114,7 @@ class mlm_pretrainer():
+         self.train_data = params['train_data'] 
+         self.val_data = params['val_data']
+         self.batch_size = params['batch_size']
++        self.dataset = params['dataset']
+ 
+         # epochs
+         self.epoch = params['epoch']
+@@ -133,6 +127,7 @@ class mlm_pretrainer():
+ 
+         # model specific         
+         self.model = params['model']
++        self.config = params['config']
+         self.dimension = params['dim']
+         self.num_layers = params['num_layers']
+         self.dropout = params['dropout']
+@@ -172,27 +167,24 @@ class mlm_pretrainer():
+             final_epoch = ep
+             target_values = []
+             print('Training model on epoch ' + str(self.epoch + ep))
+-
+             t0 = time.time()
+             progress_bar = tqdm(self.train_data, desc=f'Epoch {ep+1}/{self.num_epochs}')
+             for batch in progress_bar:
+                 self.optimizer.zero_grad() 
++                input_ids = batch['input_ids'].squeeze(dim=1).to(device)
++                attention_mask = batch['attention_mask'].squeeze(dim=1).to(device)
++                labels = batch['labels'].squeeze(dim=1).to(device)  # Assuming 'labels' are the masked labels
+                 with torch.autocast(device_type="cuda", dtype=torch_dtype):
+-                    # I don't need to feed in an attention mask
+-                    #inputs = {'input_ids':batch['input_ids'].squeeze(dim=1).to(device), 'attention_mask':batch['attention_mask'].squeeze(dim=1).to(device)}
+-                    # have to reshape the input into a readable batch
+-                    tweet_input = batch['input_ids'].squeeze(dim=1).to(device)
+-                    if tweet_input.shape[0] % self.batch_size != 0:
++                    if input_ids.shape[0] % self.batch_size != 0:
+                         break 
+-                    tweet_input = rearrange(tweet_input, '(b l) d -> b l d', b = self.batch_size)
+-                    out = self.model(tweet_input.long())
+-                    target = batch['labels'].squeeze(dim=1)
+-                    target = rearrange(target, '(b l) d -> b l d', b = self.batch_size)
+-                    loss = loss_fct(out, target.float().to(device))
++                    out = self.model(input_ids, attention_mask=attention_mask)
++                    target = batch['labels'].squeeze(dim=1).cuda()
++                    loss = loss_fct(out.view(-1, self.config.vocab_size), target.view(-1))
+                 writer.add_scalar("charts/loss", loss.item(), global_step)
+                 scaler.scale(loss).backward()
+                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                 scaler.step(self.optimizer)
++                scaler.update()
+ 
+                 # take the tensors off the gpu
+                 out = out.detach().cpu()
+@@ -210,15 +202,16 @@ class mlm_pretrainer():
+             val_loss = 0
+             with torch.no_grad():
+                 for batch in val_progress_bar:
++                    input_ids = batch['input_ids'].squeeze(dim=1).to(device)
++                    attention_mask = batch['attention_mask'].squeeze(dim=1).to(device)
++                    labels = batch['labels'].squeeze(dim=1).to(device)  # Assuming 'labels' are the masked labels
+                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
+-                        tweet_input = batch['input_ids'].squeeze(dim=1).to(device)
+-                        if tweet_input.shape[0] % self.batch_size != 0:
++                        if input_ids.shape[0] % self.batch_size != 0:
+                             break 
+-                        tweet_input = rearrange(tweet_input, '(b l) d -> b l d', b = self.batch_size)
+-                        out = self.model(tweet_input.long())
+-                        target = batch['labels'].squeeze(dim=1)
+-                        target = rearrange(target, '(b l) d -> b l d', b = self.batch_size)
+-                        loss = loss_fct(out, target.float().to(device))
++                        # we need both a casual and a attention mask
++                        out = self.model(input_ids, attention_mask=attention_mask)
++                        target = batch['labels'].squeeze(dim=1).cuda()
++                        loss = loss_fct(out.view(-1, self.config.vocab_size), target.view(-1))
+                         val_step += self.batch_size
+                         # track the val loss with tensorboard
+                         writer.add_scalar("charts/val_loss", loss, val_step)
+@@ -232,9 +225,9 @@ class mlm_pretrainer():
+                 else:
+                     prev_val_loss = val_loss
+ 
+-        torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' +  self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
+-        torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
+-        torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
++        torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' + self.dataset + '_' + str(self.run_id) + '_' + str(final_epoch + 1) + '.pt')
++        torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + str(self.run_id) + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
++        torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  str(self.run_id) + '_' + str(self.epoch + 1) + '.pt')
+ 
+ if __name__=='__main__':
+     # nightly pytorch build required
+@@ -257,12 +250,12 @@ if __name__=='__main__':
+ 
+     # Training loop 
+     parser.add_argument('-e', '--epoch', type = int, help = 'Current epoch at start of training', default=0)
+-    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=10)
++    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=1)
+     parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=False, default=False)
+     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
+     parser.add_argument('-b', '--batch_size',type=int, help='Batch size for pretraining', default=16)
+     parser.add_argument('-testm', '--test_model', type=str2bool, help='Whether or not to test our model', nargs='?', const=True, default=True)
+-    parser.add_argument('-dn', '--dataset_name', type=str, help='Name of dataset', default='Tempstock')
++    parser.add_argument('-dn', '--dataset_name', type=str, help='Name of dataset', default='tempstock')
+     parser.add_argument('-tr', '--track', type=str2bool, help='Track with weights and biases', nargs='?', const=False, default=False)
+     parser.add_argument('-pa', '--patience', type=int, help='Patience parameter for MLM training loop', default=3)
+ 
+@@ -303,7 +296,7 @@ if __name__=='__main__':
+ 
+     #bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+     bertweet_config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/bertweet.json', local_files_only=True)
+-    bertweet = AutoModel.from_config(bertweet_config)
++    bertweet = RobertaForMaskedLM._from_config(bertweet_config)
+     if(args.epoch == 0):
+         # what is the reason for this flag?
+         if args.hugging_face_model is True:
+@@ -318,12 +311,14 @@ if __name__=='__main__':
+                     vilt = ViltModel._from_config(config)
+                 elif args.model_name == 'roberta_mlm':
+                     config = AutoConfig.from_pretrained("/work/nlp/b.irving/nlp/src/hug/configs/roberta_mlm.json", output_hidden_states=True)
+-                    model = AutoModel.from_config(config)
+-                    model = roberta_mlm_wrapper(model).to(device)
++                    model = RobertaForMaskedLM._from_config(config).cuda()
+         elif args.model_name == 'meant_language_encoder':
+             # which are basically just robertabase embeddings
+-            embeddings = bertweet.embeddings
+-            model = meant_language_pretrainer(12, 768, embeddings).to(device) 
++            config = bertweet_config
++            embeddings = bertweet.roberta.embeddings
++            lm_head = bertweet.lm_head
++            # but how do you withdraw loss from frankenstein model?
++            model = meant_language_pretrainer(args.num_encoders, 768, embeddings, lm_head).to(device) 
+         elif args.model_name == 'meant_vision_encoder':
+             raise ValueError('Unimplemented')
+         else:
+@@ -385,8 +380,8 @@ if __name__=='__main__':
+     tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base")
+     train = mlm_dataset(train_tweets, None, tokenizer, max_length=128)
+     val = mlm_dataset(val_tweets, None, tokenizer, max_length=128) 
+-    train_loader = DataLoader(train, shuffle=True, batch_size=args.batch_size * args.lag, pin_memory=True)
+-    val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size * args.lag, pin_memory=True)
++    train_loader = DataLoader(train, shuffle=True, batch_size=args.batch_size, pin_memory=True)
++    val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size, pin_memory=True)
+     
+     # then delete the data that we don't need to pass 
+     del data
+@@ -432,7 +427,8 @@ if __name__=='__main__':
+             'lrst':args.learning_rate_scheduler_type,
+             'tokenizer':tokenizer,
+             'model_name':args.model_name,
+-            'num_encoders':args.num_encoders
++            'num_encoders':args.num_encoders,
++            'config': config
+ 
+     }
+ 
+diff --git a/run_in_loop.sh b/run_in_loop.sh
+index a8c59d6..e2c3a31 100755
+--- a/run_in_loop.sh
++++ b/run_in_loop.sh
+@@ -5,22 +5,22 @@ output_filepath='/work/nlp/b.irving/meant_runs/output_files/'
+ filepath='/work/nlp/b.irving/meant_runs/'
+ model_id_number=$(shuf -i 100000-999999 -n 1)
+ model_id="$model_id_number"
+-num_encoders=12
++num_encoders=1
+ 
+-optimizer='Adam'
+-model_name='meant_vision'
++optimizer='AdamW'
++model_name='meant'
+ hug=False
+-dataset='tempstock'
+-
++dataset='Tempstock'
+ img=False
+ lang=False
++
+ job=$(sbatch --mem=50G \
+              --time=$jobtime \
+              -p gpu \
+              --gres=gpu:a100:1 \
+              --output="${output_filepath}$model_name-$dataset-$model_id-$num_encoders-%j.out" \
+              in_loop_train.py \
+-             --num_epochs=30 \
++             --num_epochs=6 \
+              --normalize=False \
+              --num_encoders=$num_encoders \
+              --optimizer=$optimizer \
+@@ -28,5 +28,6 @@ job=$(sbatch --mem=50G \
+              --language_only=$lang \
+              --hugging_face_model=$hug \
+              --model_name=$model_name \
++             --dataset=$dataset \
+              --run_id=$model_id | awk '{print $NF}')
+ echo $job
+diff --git a/run_pretrain_mlm.sh b/run_pretrain_mlm.sh
+index 2cce9b8..a5c32d9 100755
+--- a/run_pretrain_mlm.sh
++++ b/run_pretrain_mlm.sh
+@@ -6,5 +6,6 @@ sbatch -p gpu --time=08:00:00 --mem=32GB --gres=gpu:a100:1 \
+ --output=/work/nlp/b.irving/meant_runs/output_files/$model_name-%j.out \
+ pretrain_mlm.py \
+ --model_name=$model_name \
++--num_encoders=12 \
+ --track='True' \
+ --batch_size=16 \
+\ No newline at end of file
+diff --git a/runs/meant/events.out.tfevents.1706646187.c2193.27022.0 b/runs/meant/events.out.tfevents.1706646187.c2193.27022.0
+deleted file mode 100644
+index a890431..0000000
+Binary files a/runs/meant/events.out.tfevents.1706646187.c2193.27022.0 and /dev/null differ
+diff --git a/runs/meant/events.out.tfevents.1706646274.c2193.28399.0 b/runs/meant/events.out.tfevents.1706646274.c2193.28399.0
+deleted file mode 100644
+index 77356c9..0000000
+Binary files a/runs/meant/events.out.tfevents.1706646274.c2193.28399.0 and /dev/null differ
+diff --git a/runs/meant/events.out.tfevents.1706646462.c2193.29085.0 b/runs/meant/events.out.tfevents.1706646462.c2193.29085.0
+deleted file mode 100644
+index 56ee302..0000000
+Binary files a/runs/meant/events.out.tfevents.1706646462.c2193.29085.0 and /dev/null differ
+diff --git a/runs/meant/events.out.tfevents.1706646535.c2193.29177.0 b/runs/meant/events.out.tfevents.1706646535.c2193.29177.0
+deleted file mode 100644
+index 25beaf7..0000000
+Binary files a/runs/meant/events.out.tfevents.1706646535.c2193.29177.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706646717.c2193.29557.0 b/runs/meant_language_encoder/events.out.tfevents.1706646717.c2193.29557.0
+deleted file mode 100644
+index 3b9984c..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706646717.c2193.29557.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706646800.c2193.29679.0 b/runs/meant_language_encoder/events.out.tfevents.1706646800.c2193.29679.0
+deleted file mode 100644
+index 26989ce..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706646800.c2193.29679.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706647233.c2193.30150.0 b/runs/meant_language_encoder/events.out.tfevents.1706647233.c2193.30150.0
+deleted file mode 100644
+index 9c07342..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706647233.c2193.30150.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706647629.c2191.25150.0 b/runs/meant_language_encoder/events.out.tfevents.1706647629.c2191.25150.0
+deleted file mode 100644
+index 769ff66..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706647629.c2191.25150.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706647753.c2191.25567.0 b/runs/meant_language_encoder/events.out.tfevents.1706647753.c2191.25567.0
+deleted file mode 100644
+index f0bf992..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706647753.c2191.25567.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706647964.c2191.1743.0 b/runs/meant_language_encoder/events.out.tfevents.1706647964.c2191.1743.0
+deleted file mode 100644
+index ad390fe..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706647964.c2191.1743.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706648100.c2191.1887.0 b/runs/meant_language_encoder/events.out.tfevents.1706648100.c2191.1887.0
+deleted file mode 100644
+index 53b90ec..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706648100.c2191.1887.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706648198.c2191.2062.0 b/runs/meant_language_encoder/events.out.tfevents.1706648198.c2191.2062.0
+deleted file mode 100644
+index 8cccf65..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706648198.c2191.2062.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706648354.c2191.2257.0 b/runs/meant_language_encoder/events.out.tfevents.1706648354.c2191.2257.0
+deleted file mode 100644
+index 9ed0797..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706648354.c2191.2257.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706648474.c2191.2552.0 b/runs/meant_language_encoder/events.out.tfevents.1706648474.c2191.2552.0
+deleted file mode 100644
+index 7c0cbb0..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706648474.c2191.2552.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706648674.c2191.2892.0 b/runs/meant_language_encoder/events.out.tfevents.1706648674.c2191.2892.0
+deleted file mode 100644
+index b12cb09..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706648674.c2191.2892.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706649172.c2191.3534.0 b/runs/meant_language_encoder/events.out.tfevents.1706649172.c2191.3534.0
+deleted file mode 100644
+index 9dbfe9c..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706649172.c2191.3534.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706650115.c2191.6459.0 b/runs/meant_language_encoder/events.out.tfevents.1706650115.c2191.6459.0
+deleted file mode 100644
+index 805c1af..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706650115.c2191.6459.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706650216.c2191.6580.0 b/runs/meant_language_encoder/events.out.tfevents.1706650216.c2191.6580.0
+deleted file mode 100644
+index ae8bf0e..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706650216.c2191.6580.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706650382.c2191.6938.0 b/runs/meant_language_encoder/events.out.tfevents.1706650382.c2191.6938.0
+deleted file mode 100644
+index 207f62a..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706650382.c2191.6938.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706650554.c2191.7188.0 b/runs/meant_language_encoder/events.out.tfevents.1706650554.c2191.7188.0
+deleted file mode 100644
+index 11e67d7..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706650554.c2191.7188.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706651353.c2191.8063.0 b/runs/meant_language_encoder/events.out.tfevents.1706651353.c2191.8063.0
+deleted file mode 100644
+index cd65a87..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706651353.c2191.8063.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706735043.d1026.18173.0 b/runs/meant_language_encoder/events.out.tfevents.1706735043.d1026.18173.0
+deleted file mode 100644
+index 2090de4..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706735043.d1026.18173.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706735176.d1026.18323.0 b/runs/meant_language_encoder/events.out.tfevents.1706735176.d1026.18323.0
+deleted file mode 100644
+index a508f8c..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706735176.d1026.18323.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706735328.d1026.18616.0 b/runs/meant_language_encoder/events.out.tfevents.1706735328.d1026.18616.0
+deleted file mode 100644
+index 0bf071e..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706735328.d1026.18616.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706735482.d1026.19004.0 b/runs/meant_language_encoder/events.out.tfevents.1706735482.d1026.19004.0
+deleted file mode 100644
+index e9ef5c8..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706735482.d1026.19004.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706736312.d1026.20879.0 b/runs/meant_language_encoder/events.out.tfevents.1706736312.d1026.20879.0
+deleted file mode 100644
+index f152ba3..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706736312.d1026.20879.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706736375.d1026.20974.0 b/runs/meant_language_encoder/events.out.tfevents.1706736375.d1026.20974.0
+deleted file mode 100644
+index 9af9a77..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706736375.d1026.20974.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706736429.d1026.21063.0 b/runs/meant_language_encoder/events.out.tfevents.1706736429.d1026.21063.0
+deleted file mode 100644
+index 2ffa765..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706736429.d1026.21063.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706736717.d1026.21561.0 b/runs/meant_language_encoder/events.out.tfevents.1706736717.d1026.21561.0
+deleted file mode 100644
+index b041cce..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706736717.d1026.21561.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706737283.d1026.22310.0 b/runs/meant_language_encoder/events.out.tfevents.1706737283.d1026.22310.0
+deleted file mode 100644
+index 71451a1..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706737283.d1026.22310.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706748262.d1026.42553.0 b/runs/meant_language_encoder/events.out.tfevents.1706748262.d1026.42553.0
+deleted file mode 100644
+index ca6a401..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706748262.d1026.42553.0 and /dev/null differ
+diff --git a/runs/meant_language_encoder/events.out.tfevents.1706751798.d1026.47922.0 b/runs/meant_language_encoder/events.out.tfevents.1706751798.d1026.47922.0
+deleted file mode 100644
+index b86afc6..0000000
+Binary files a/runs/meant_language_encoder/events.out.tfevents.1706751798.d1026.47922.0 and /dev/null differ
+diff --git a/runs/roberta_mlm/events.out.tfevents.1706640309.c2193.9010.0 b/runs/roberta_mlm/events.out.tfevents.1706640309.c2193.9010.0
+deleted file mode 100644
+index 16a0b62..0000000
+Binary files a/runs/roberta_mlm/events.out.tfevents.1706640309.c2193.9010.0 and /dev/null differ
+diff --git a/runs/roberta_mlm/events.out.tfevents.1706640398.c2193.9165.0 b/runs/roberta_mlm/events.out.tfevents.1706640398.c2193.9165.0
+deleted file mode 100644
+index 30b7f3a..0000000
+Binary files a/runs/roberta_mlm/events.out.tfevents.1706640398.c2193.9165.0 and /dev/null differ
+diff --git a/runs/roberta_mlm/events.out.tfevents.1706640452.c2193.9247.0 b/runs/roberta_mlm/events.out.tfevents.1706640452.c2193.9247.0
+deleted file mode 100644
+index 37ae84f..0000000
+Binary files a/runs/roberta_mlm/events.out.tfevents.1706640452.c2193.9247.0 and /dev/null differ
+diff --git a/runs/roberta_mlm/events.out.tfevents.1706641658.c2193.11265.0 b/runs/roberta_mlm/events.out.tfevents.1706641658.c2193.11265.0
+deleted file mode 100644
+index 7a82e73..0000000
+Binary files a/runs/roberta_mlm/events.out.tfevents.1706641658.c2193.11265.0 and /dev/null differ
+diff --git a/runs/roberta_mlm/events.out.tfevents.1706644550.c2193.20107.0 b/runs/roberta_mlm/events.out.tfevents.1706644550.c2193.20107.0
+deleted file mode 100644
+index 84cf655..0000000
+Binary files a/runs/roberta_mlm/events.out.tfevents.1706644550.c2193.20107.0 and /dev/null differ
+diff --git a/test.py b/test.py
+index eb7f2f5..a31d14b 100644
+--- a/test.py
++++ b/test.py
+@@ -1,4 +1,7 @@
+ #!/usr/bin/env python
++import sys
++from datasets import load_dataset
++import torch
+ import csv
+ import pandas as pd
+ import ast
+@@ -28,7 +31,7 @@ from torch.nn.utils.rnn import pad_sequence
+ from torchmetrics.classification import MulticlassF1Score, MulticlassPrecision, MulticlassRecall
+ import re
+ sys.path.append('../meant')
+-from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, vl_BERT_Wrapper, ViltWrapper 
++from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, vl_BERT_Wrapper, ViltWrapper, bertweet_wrapper, visionEncoder, languageEncoder, meant_language_pretrainer, meant_vision_pretrainer
+ from utils import f1_metrics
+ from joblib import Memory
+ from datasets import load_dataset
+@@ -39,14 +42,161 @@ from transformers import ViltModel, ViltProcessor
+ from einops.layers.torch import Rearrange
+ from PIL import Image
+ import requests
+-device = torch.device('cuda')
++from transformers import AutoImageProcessor, ViTForMaskedImageModeling
++import itertools
++
++from huggingface_hub import login
++# hugging face login 
++login('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')
++
++model_checkpoint = "dandelin/vilt-b32-mlm"
++dataset = load_dataset("Graphcore/vqa", split="validation[:200]")
++print(dataset)
++
++labels = [item['ids'] for item in dataset['label']]
++flattened_labels = list(itertools.chain(*labels))
++unique_labels = list(set(flattened_labels))
++label2id = {label: idx for idx, label in enumerate(unique_labels)}
++id2label = {idx: label for label, idx in label2id.items()} 
++
++def replace_ids(inputs):
++  inputs["label"]["ids"] = [label2id[x] for x in inputs["label"]["ids"]]
++  return inputs
++
++dataset = dataset.map(replace_ids)
++flat_dataset = dataset.flatten()
++flat_dataset.features
++
++processor = ViltProcessor.from_pretrained(model_checkpoint)
++def preprocess_data(examples):
++    image_paths = examples['image_id']
++    images = [Image.open(image_path) for image_path in image_paths]
++    texts = examples['question']    
++    encoding = processor(images, texts, padding="max_length", truncation=True, return_tensors="pt")
++    print(encoding['pixel_mask'])
++    for k, v in encoding.items():
++          encoding[k] = v.squeeze()
++    targets = []
++    for labels, scores in zip(examples['label.ids'], examples['label.weights']):
++        target = torch.zeros(len(id2label))
++        for label, score in zip(labels, scores):
++            target[label] = score
++        targets.append(target)
++    encoding["labels"] = targets
++    return encoding
++
++processed_dataset = flat_dataset.map(preprocess_data, batched=True, remove_columns=['question','question_type',  'question_id', 'image_id', 'answer_type', 'label.ids', 'label.weights'])
++from transformers import DefaultDataCollator
++data_collator = DefaultDataCollator()
++from transformers import ViltForQuestionAnswering
++model = ViltForQuestionAnswering.from_pretrained(model_checkpoint, num_labels=len(id2label), id2label=id2label, label2id=label2id)
++from transformers import TrainingArguments
++repo_id = "MariaK/vilt_finetuned_200"
++training_args = TrainingArguments(
++    output_dir=repo_id,
++    per_device_train_batch_size=4,
++    num_train_epochs=20,
++    save_steps=200,
++    logging_steps=50,
++    learning_rate=5e-5,
++    save_total_limit=2,
++    remove_unused_columns=False,
++    push_to_hub=True,
++)
++from transformers import Trainer
++trainer = Trainer(
++    model=model,
++    args=training_args,
++    data_collator=data_collator,
++    train_dataset=processed_dataset,
++    tokenizer=processor,
++)
++trainer.train()
++sys.exit()
++
++
++
++
++
++
++
++
++
++
++
++
+ bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+-# try to change the weight type?
+-print(bertweet.embeddings)
+-print(bertweet.embeddings.word_embeddings.weight.dtype)
+-print(bertweet.embeddings.position_embeddings.weight.dtype)
+-print(bertweet.embeddings.token_type_embeddings.weight.dtype)
++device = torch.device('cuda')
++model = meant(text_dim = 768, 
++    image_dim = 768, 
++    price_dim = 4, 
++    height = 224, 
++    width = 224, 
++    patch_res = 16, 
++    lag = 5, 
++    num_classes = 2, 
++    embedding = bertweet.embeddings,
++    flash=False,
++    num_encoders=1).to(device)
++tweets = torch.ones(16, 5, 128)
++images = torch.ones(16,5, 4, 224, 224)
++model.forward(tweets.long().cuda(), images.cuda())
++
+ sys.exit()
++model_checkpoint = "dandelin/vilt-b32-mlm"
++processor = ViltProcessor.from_pretrained(model_checkpoint)
++
++dataset = load_dataset("Graphcore/vqa", split="train[0:10]")
++print(dataset[0])
++print(dataset)
++
++labels = [item['ids'] for item in dataset['label']]
++flattened_labels = list(itertools.chain(*labels))
++unique_labels = list(set(flattened_labels))
++label2id = {label: idx for idx, label in enumerate(unique_labels)}
++id2label = {idx: label for label, idx in label2id.items()} 
++def replace_ids(inputs):
++    inputs["label"]["ids"] = [label2id[x] for x in inputs["label"]["ids"]]
++    return inputs
++
++# we want to preprocess these values
++dataset = dataset.map(replace_ids)
++flat_dataset = dataset.flatten()
++print(flat_dataset)
++
++# need to account for the preprocess data
++def preprocess_data(examples):
++    image_paths = examples['image_id']
++    images = [Image.open(image_path) for image_path in image_paths]
++    texts = examples['question']    
++    encoding = processor(images, texts, padding="max_length", truncation=True, return_tensors="pt")
++    for k, v in encoding.items():
++        encoding[k] = v.squeeze()
++    targets = []
++    for labels, scores in zip(examples['label.ids'], examples['label.weights']):
++        target = torch.zeros(len(id2label))
++        for label, score in zip(labels, scores):
++            target[label] = score
++        targets.append(target)
++    encoding["labels"] = targets
++    return encoding
++
++processed_dataset = flat_dataset.map(preprocess_data, batched=True, 
++    remove_columns=['question', 'question_type', 'question_id', 'image_id', 'answer_type', 'label.ids', 'label.weights'])
++
++# TODO: Batch extract the image and language input ids
++
++print(processed_dataset[0].keys())
++print(id2label)
++print([len(label) for label in processed_dataset["labels"]])
++#print(processed_dataset)
++
++#print(flat_dataset)
++#print(flat_dataset[0])
++sys.exit()
++device = torch.device('cuda')
++bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
++print(pretrained_vision)
+ model = meant(text_dim = 768, 
+                 image_dim = 768, 
+                 price_dim = 4, 
+@@ -54,11 +204,26 @@ model = meant(text_dim = 768,
+                 width = 224, 
+                 patch_res = 16, 
+                 lag = 5, 
+-                num_classes = 2,
+-                flash=True,
++                num_classes = 2, 
+                 embedding = bertweet.embeddings,
+-                num_encoders=12).half().to(device)
++                flash=False,
++                num_encoders=12).to(device)
++# using pretrained language encoder
++# need to pretrain a 12 encoder setup
++pretrained_vision = torch.load('/work/nlp/b.irving/meant_runs/models/meant_vision_encoder/meant_vision_encoder_Tempstock_0.pt')
++language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt')
++model.languageEncoders = language_encoders.languageEncoders
++model.visionEncoders = pretrained_vision.visionEncoders
++print(model)
++sys.exit()
++# Count parameters
++total_params = sum(p.numel() for p in model.parameters())
++trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
++
++print(f"Total Parameters: {total_params}")
++print(f"Trainable Parameters: {trainable_params}")
+ 
++sys.exit()
+ sample_graph = torch.ones(3, 5, 4, 224, 224).half().to(device)
+ sample_tweet = torch.ones(3, 5, 128).long().to(device)
+ 
+diff --git a/utils/__init__.py b/utils/__init__.py
+index 7ed3cc5..8b091b1 100644
+--- a/utils/__init__.py
++++ b/utils/__init__.py
+@@ -1,3 +1,3 @@
+ from .f1_metrics import f1_metrics
+-from .custom_datasets import mlm_dataset
++from .custom_datasets import mlm_dataset, mim_dataset, vqa_dataset, FilteredDataset
+ from .rms_norm import RMSNorm
+\ No newline at end of file
+diff --git a/utils/custom_datasets.py b/utils/custom_datasets.py
+index e8818db..f545c70 100644
+--- a/utils/custom_datasets.py
++++ b/utils/custom_datasets.py
+@@ -1,13 +1,20 @@
+ from torch.utils.data import DataLoader, TensorDataset, Dataset
+ import torch
+ import emoji
++from datasets import load_dataset
++import itertools
++from PIL import Image
++import torchvision.transforms as transforms
++import sys
+ 
+ def replace_emojis_with_text(text):
+     return emoji.demojize(text) 
+ 
+ # custom datasets classes for loading different tasks
++# dynamic padding for the longest sequence?
+ class mlm_dataset(Dataset):
+-    def __init__(self, dataset, split, tokenizer, max_length=512, mlm_probability=0.15):
++    def __init__(self, dataset, split, tokenizer, max_length=256, mlm_probability=0.15):
++        # Select the split of the dataset
+         if split is not None:
+             self.dataset = dataset[split]
+         else:
+@@ -20,9 +27,13 @@ class mlm_dataset(Dataset):
+     def __len__(self):
+         return len(self.dataset)
+ 
++    # this should be dynamic though
+     def __getitem__(self, idx):
+-        text = replace_emojis_with_text(self.dataset[idx])
++        # Get the text item from the dataset at the specified index
++        text = self.dataset[idx]
++        # Tokenize the text; this does NOT yet apply MLM
+         tokens = self.tokenizer(text, padding='max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
++        # Prepare inputs for MLM
+         inputs, labels = self.mask_tokens(tokens['input_ids'])
+         return {'input_ids': inputs, 'labels': labels, 'attention_mask': tokens['attention_mask']}
+ 
+@@ -32,7 +43,6 @@ class mlm_dataset(Dataset):
+         labels = inputs.clone()
+         # Create a mask array
+         probability_matrix = torch.full(labels.shape, self.mlm_probability)
+-
+         # Apply special token mask: do not mask special tokens
+         special_tokens_mask = [
+             self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
+@@ -45,4 +55,129 @@ class mlm_dataset(Dataset):
+         inputs[masked_indices] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
+         return inputs, labels
+ 
+-    
+\ No newline at end of file
++
++class clm_dataset(Dataset):
++    def __init__(self, dataset, split, tokenizer, max_length=256):
++        # Select the split of the dataset
++        if split is not None:
++            self.dataset = dataset[split]
++        else:
++            self.dataset = dataset
++        
++        self.tokenizer = tokenizer
++        self.max_length = max_length
++
++    def __len__(self):
++        return len(self.dataset)
++
++    def __getitem__(self, idx):
++        # Get the text item from the dataset at the specified index
++        text = self.dataset[idx]
++        # Tokenize the text
++        tokens = self.tokenizer(text, padding='max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
++        
++        # Prepare inputs and labels for CLM: labels are shifted by one token
++        # so that the model predicts the next token for each token in the input
++        inputs = tokens['input_ids']
++        labels = inputs.clone()
++        labels[:, :-1] = inputs[:, 1:]  # Shift input to the left for labels
++        labels[:, -1] = -100  # Ignore the last token for loss calculation
++
++        return {'input_ids': inputs.squeeze(), 'labels': labels.squeeze(), 'attention_mask': tokens['attention_mask'].squeeze()}
++
++
++# our class
++class mim_dataset(Dataset):
++    def __init__(self, dataset, split=None, transform=None, mask_probability=0.15, mask_value=0):
++        # Select the split of the dataset
++        if split is not None:
++            self.dataset = dataset[split]
++        else:
++            self.dataset = dataset
++        
++        self.transform = transform
++        self.mask_probability = mask_probability
++        self.mask_value = mask_value
++
++    def __len__(self):
++        return len(self.dataset)
++
++    def __getitem__(self, idx):
++        # Get the image from the dataset at the specified index
++        image = self.dataset[idx]
++        # Apply transformations if any
++        if self.transform:
++            image = self.transform(image)
++        # Prepare inputs for MIM by masking parts of the image
++        inputs, labels = self.mask_image(image)
++        return {'input_ids': inputs, 'labels': labels}
++
++    def mask_image(self, image):
++        """
++        Randomly mask parts of the image.
++        """
++        labels = image.clone()
++        mask = torch.bernoulli(torch.full(labels.shape, self.mask_probability)).bool()
++        
++        inputs = torch.where(mask, self.mask_value, labels)
++        labels[~mask] = -100  
++
++        return inputs, labels
++
++# Im proud of YOU
++class vqa_dataset(Dataset):
++    def __init__(self, id2label, label2id, data, tokenizer, max_length=40, split=None):
++        self.id2label = id2label
++        self.label2id = label2id
++        self.max_length = max_length
++        self.num_classes = len(self.id2label)
++        self.transform = transforms.Compose([
++            transforms.Resize((224, 224)),  # Resize the image to 224x224
++            transforms.ToTensor()  # Convert the image to a PyTorch tensor
++        ])
++        # we want to preprocess these values
++        dataset = data.map(self.replace_ids)
++        # this should work
++        self.dataset = dataset.flatten()
++        self.tokenizer = tokenizer
++        del dataset
++    # replace the input ids
++    def replace_ids(self, inputs):
++        inputs["label"]["ids"] = [self.label2id[x] for x in inputs["label"]["ids"]]
++        return inputs
++
++    def __len__(self):
++        return len(self.dataset)
++
++    def __getitem__(self, idx):
++        example = self.dataset[idx]
++        # then build the encoding from the input index
++        question = self.tokenizer(example['question'], padding='max_length', max_length=self.max_length, truncation=True, return_tensors='pt')
++        image = example['image_id']
++        image = Image.open(image).convert("RGB")
++        image_input_ids = self.transform(image)
++
++        #encoding = self.tokenizer(image, example['question'], padding='max_length', 
++        #        max_length=self.max_length, truncation=True, return_tensors='pt')
++        #   pixel mask for the pixel values IS NOT precomputed
++        encoding = {'language_input_ids':question['input_ids'], 
++            'attention_mask':question['attention_mask'], 'pixel_values':image_input_ids}
++        example = self.dataset[idx]
++        target = torch.zeros(self.num_classes)
++        target[example['label.ids'][0]] = example['label.weights'][0]
++        encoding['labels'] = target
++        # will it stack the encodings automatically 
++        return encoding
++    
++
++class FilteredDataset(Dataset):
++    def __init__(self, data, good_indices):
++        self.data = data[good_indices]
++        self.good_indices = good_indices
++
++    def __len__(self):
++        return len(self.good_indices)
++
++    def __getitem__(self, idx):
++        # Fetch the index of the 'good' data
++        return self.data[idx]
+\ No newline at end of file
+diff --git a/utils/f1_metrics.py b/utils/f1_metrics.py
+index 0454028..01f8f4b 100644
+--- a/utils/f1_metrics.py
++++ b/utils/f1_metrics.py
+@@ -34,7 +34,7 @@ class f1_metrics():
+         return (acc, f1_macro, f1_micro, precision_macro, 
+                 precision_micro, recall_macro, recall_micro)
+ 
+-    def show(self):
++    def show(self, _class=None):
+         (accuracy, 
+         f1_macro, 
+         f1_micro, 
+@@ -49,4 +49,11 @@ class f1_metrics():
+         print('Micro ' + self.set_name + ' precision: ', precision_micro)
+         print('Macro ' + self.set_name + ' recall: ', recall_macro)
+         print('Micro ' + self.set_name + ' recall: ', recall_micro)
++        if _class is not None:
++            print('Macro ' + self.set_name + ' f1 for class ' + str(_class), f1_macro[_class].item())
++            print('Micro ' + self.set_name + ' f1 for class ' + str(_class), f1_micro[_class])
++            print('Macro ' + self.set_name + ' precision for class ' + str(_class), precision_macro[_class])
++            print('Micro ' + self.set_name + ' precision for class ' + str(_class), precision_micro[_class])
++            print('Macro ' + self.set_name + ' recall for class  ' + str(_class), recall_macro[_class])
++            print('Micro ' + self.set_name + ' recall for class ' + str(_class), recall_micro[_class])
+         return f1_macro, f1_micro
+\ No newline at end of file

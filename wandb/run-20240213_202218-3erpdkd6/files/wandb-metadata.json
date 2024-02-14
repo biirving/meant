@@ -1,0 +1,372 @@
+{
+    "os": "Linux-3.10.0-1160.71.1.el7.x86_64-x86_64-with-glibc2.17",
+    "python": "3.10.10",
+    "heartbeatAt": "2024-02-14T01:22:18.976288",
+    "startedAt": "2024-02-14T01:22:18.367991",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--track=True",
+        "--model_name=vilt",
+        "--hugging_face_model=True"
+    ],
+    "state": "running",
+    "program": "/work/nlp/b.irving/meant/vqa.py",
+    "codePathLocal": "vqa.py",
+    "codePath": "vqa.py",
+    "git": {
+        "remote": "https://github.com/biirving/meant.git",
+        "commit": "314d021ec8b92124806ef94b480dbd4ea3f9a574"
+    },
+    "email": "biirving30@gmail.com",
+    "root": "/work/nlp/b.irving/meant",
+    "host": "d1029",
+    "username": "irving.b",
+    "executable": "/work/nlp/b.irving/.conda/envs/helios/bin/python",
+    "cpu_count": 64,
+    "cpu_count_logical": 64,
+    "cpu_freq": {
+        "current": 2794.7740000000026,
+        "min": 0.0,
+        "max": 0.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        },
+        {
+            "current": 2794.774,
+            "min": 0.0,
+            "max": 0.0
+        }
+    ],
+    "disk": {
+        "/": {
+            "total": 19.521484375,
+            "used": 5.103839874267578
+        }
+    },
+    "gpu": "NVIDIA A100-SXM4-80GB",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA A100-SXM4-80GB",
+            "memory_total": 85899345920
+        }
+    ],
+    "memory": {
+        "total": 503.40164947509766
+    }
+}

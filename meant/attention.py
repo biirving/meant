@@ -6,7 +6,7 @@ import torch
 from rotary_embedding_torch import RotaryEmbedding
 
 """
-A classic attention mechanism with xPos embedding support.
+A classic attention mechanism with support for axial-2D embeddings (images)
 """
 class attention(nn.Module):
 
@@ -33,14 +33,14 @@ class attention(nn.Module):
         self.k = nn.Linear(self.dim, self.Dh * self.num_heads).float()
         
     def forward(self, input):
-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l n (h d) -> b l h n d', h = self.num_heads), 
+        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
  
         q_mat = self.pos_emb.rotate_queries_or_keys(q_mat)
         k_mat = self.pos_emb.rotate_queries_or_keys(k_mat)
 
         # Compute attention scores using dot product of queries and keys
-        scores = torch.matmul(q_mat, torch.transpose(k_mat, 3, 4)) / math.sqrt(self.Dh * self.num_heads)
+        scores = torch.matmul(q_mat, torch.transpose(k_mat, 2, 3)) / math.sqrt(self.Dh * self.num_heads)
 
         # for tracing: trace call cannot deal with control flow
         @torch.jit.script_if_tracing
@@ -56,7 +56,7 @@ class attention(nn.Module):
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
         # reshape for the linear layer
-        inter = rearrange(inter, 'b l h n d -> b l n (h d)')
+        inter = rearrange(inter, 'b h n d -> b n (h d)')
         output = self.multi_mad(inter)
         output = self.dropout(output)
         return output

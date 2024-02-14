@@ -1,23 +1,40 @@
-
 import torch
 from torch import nn
 from einops.layers.torch import Rearrange
 from einops import repeat, rearrange
 from .attention import attention
+from .flash_attention import flash_attention
 from .xPosAttention import xPosAttention
+from .xPosAttention_flash import xPosAttention_flash
 from .temporal import temporal
 from rotary_embedding_torch import RotaryEmbedding
 import math
 from transformers import AutoModel, AutoTokenizer
+from utils import RMSNorm 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # okay, lets run these experiments
 MAX_SEQ_LENGTH = 3333
 
-# should the vision encoder encode temporal information?
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+# Check if CUDA is available
+if torch.cuda.is_available():
+    # Get the name of the CUDA device
+    cuda_device_name = torch.cuda.get_device_name(0)
+
+    # Check if the device name contains "Ampere" or a later architecture
+    if "Ampere" in cuda_device_name or "A100" in cuda_device_name:
+        ampere = True
+    else:
+        ampere = False
+else:
+    print("CUDA is not available on this system.")
+    ampere = False
+
 class visionEncoder(nn.Module):
-    def __init__(self, dim, num_heads):
+    # we should pretrain the patch embeddings, right?
+    def __init__(self, dim, num_heads, flash=False):
         """
         The initial encoder for extracting relevant features from the multimodal input.
         """
@@ -30,13 +47,21 @@ class visionEncoder(nn.Module):
             dim = math.floor(dim/num_heads/2),
             freqs_for='pixel')
         
-        # why use the kosmos architecture
-        self.encode = nn.ModuleList([nn.LayerNorm(dim), 
+        if flash and ampere:
+            atten = flash_attention(num_heads, dim, self.posEmbed) 
+        else:
+            if flash and not ampere and torch.cuda.is_available():
+                print(f"The {cuda_device_name} GPU is not from the Ampere series or later. Flash attention not supported.")
+            elif flash:
+                print('Cuda not supported. Cannot use flash attention.')
+            atten = attention(num_heads, dim, self.posEmbed)
+
+        self.encode = nn.ModuleList([RMSNorm(dim), 
                                     nn.Linear(dim, dim), 
-                                    attention(num_heads, dim, self.posEmbed), 
-                                    nn.LayerNorm(dim), 
+                                    atten, 
+                                    RMSNorm(dim), 
                                     nn.Linear(dim, dim)])
-        self.encode2 = nn.ModuleList([nn.LayerNorm(dim), nn.Linear(dim, dim), nn.GELU(), nn.LayerNorm(dim), nn.Linear(dim, dim)])
+        self.encode2 = nn.ModuleList([RMSNorm(dim), nn.Linear(dim, dim), nn.GELU(), RMSNorm(dim), nn.Linear(dim, dim)])
 
     def forward(self, input):
         inter = input
@@ -80,7 +105,7 @@ class temporalEncoder(nn.Module):
         return x
 
 class meant_vision(nn.Module):
-    def __init__(self, image_dim, price_dim, height, width, patch_res, lag, num_classes, num_heads= 8, num_encoders = 1, channels=4):
+    def __init__(self, image_dim, price_dim, height, width, patch_res, lag, num_classes, flash=False, num_heads= 8, num_encoders = 1, channels=4):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -110,12 +135,11 @@ class meant_vision(nn.Module):
         # h = height
         # w = width
         # b = batch
-        # f = the number of frames we are processing
         self.patchEmbed = nn.Sequential(
-            Rearrange('b f c (h p1) (w p2) -> b f (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
-            nn.Linear(self.patch_dim, image_dim, dtype=torch.float32),)
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+            nn.Linear(self.patch_dim, image_dim))
 
-        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
+        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads, flash=flash) for i in range(num_encoders)])
 
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)]).to(torch.float32)
 
@@ -127,19 +151,15 @@ class meant_vision(nn.Module):
 
     def forward(self, images):
 
-        # the datatype correction depends on the system?
-        image = self.patchEmbed(images)
-
+        _batch = images.shape[0]
+        images = rearrange(images, 'b l c h w -> (b l) c h w')
+        images = self.patchEmbed(images)
         for encoder in self.visionEncoders:
-            image = encoder.forward(image)
-
-        # then we take the class tokens from both encoders
-        temporal_input = torch.mean(image, dim=2)
-        temporal = temporal_input
-
+            images = encoder.forward(images)
+        images = rearrange(images, '(b l) n d -> b l n d', b = _batch)
+        temporal = torch.mean(images, dim=2)
         for encoder in self.temporal_encoding:
             temporal = encoder.forward(temporal)
-        # we process temporal output
         for mod in self.mlpHead:
             temporal = mod(temporal)
         return temporal.squeeze(dim=1)        

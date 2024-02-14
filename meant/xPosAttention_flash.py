@@ -31,15 +31,15 @@ class xPosAttention_flash(nn.Module):
         self.v = nn.Linear(self.dim, self.Dh * self.num_heads)
         #self.qkv = nn.Linear(self.dim, self.Dh * self.num_heads * 3)
 
-
+    # attention mask
     def forward(self, input):
         _batch = input.shape[0]
-        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b l s (h d) -> (b l) s h d', h = self.num_heads), 
+        q_mat, k_mat, v_mat = map(lambda t: rearrange(t, 'b s (h d) -> b s h d', h = self.num_heads), 
                                                         (self.q(input), self.v(input), self.k(input)))
         # Apply out xPos rotary embeddings
         q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
-        scores = flash_attn_func(q_mat, k_mat, v_mat, dropout_p=0.0, softmax_scale=None, causal=True,
+        scores = flash_attn_func(q_mat, k_mat, v_mat, dropout_p=0.0, softmax_scale=None, causal=self.mask,
                 window_size=(-1, -1), alibi_slopes=None, deterministic=False)
-        inter = rearrange(scores, '(b l) s h d -> b l s (h d)', b=_batch)
+        inter = rearrange(scores, 'b s h d -> b s (h d)')
         output = self.multi_mad(inter)
         return output

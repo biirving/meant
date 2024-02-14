@@ -17,13 +17,16 @@ from transformers import (
     VisualBertModel,
     ViltModel,
     ViltProcessor,
+    BertModel,
     #DebugUnderflowOverflow,
 )
 from datasets import load_dataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, TensorDataset, Dataset
 sys.path.append('../meant')
-from meant import meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, vl_BERT_Wrapper, ViltWrapper
+from meant import (meant, meant_vision, meant_tweet, temporal, meant_tweet_no_lag, 
+                   vl_BERT_Wrapper, ViltWrapper, meant_language_pretrainer, 
+                   bertweet_wrapper, meant_vision_pretrainer)
 from utils import f1_metrics
 from torch.utils.tensorboard import SummaryWriter
 import wandb
@@ -36,7 +39,7 @@ from teanet import teanet
 
 
 # detecting where nans originate from
-torch.autograd.set_detect_anomaly(True)
+#torch.autograd.set_detect_anomaly(True)
 
 torch.cuda.empty_cache()
 torch.manual_seed(42)
@@ -46,7 +49,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 np_dtype = np.float64
 
 # torch datatype to used for automatic mixed precision training
-torch_dtype = torch.float32
+torch_dtype = torch.float16
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -61,28 +64,30 @@ def str2bool(v):
 
 # simple class to help load the dataset
 class customDataset(Dataset):
-    def __init__(self, graphs, tweets, macds, labels):
+    def __init__(self, graphs, tweets, macds, attention_masks,  labels):
         self.graphs = torch.tensor(graphs)
         self.tweets = torch.tensor(tweets)
         self.macds = torch.tensor(macds)
+        self.attention_masks = torch.tensor(attention_masks)
         self.labels = torch.tensor(labels)
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        return self.graphs[idx], self.tweets[idx], self.macds[idx], self.labels[idx]
+        return self.graphs[idx], self.tweets[idx], self.macds[idx], self.attention_masks[idx], self.labels[idx]
 
 # simple class to help load the dataset
 class customDataset_stocknet(Dataset):
-    def __init__(self, tweets, prices, labels):
+    def __init__(self, tweets, prices, attention_masks, labels):
         self.tweets = torch.tensor(tweets)
         self.prices = torch.tensor(prices)
         self.labels = torch.tensor(labels)
+        self.attention_masks = torch.tensor(attention_masks)
     def __len__(self):
         return len(self.labels)
     def __getitem__(self, idx):
-        return self.tweets[idx], self.prices[idx], self.labels[idx]
+        return self.tweets[idx], self.prices[idx], self.attention_masks[idx], self.labels[idx]
 
 class meant_trainer():
     def __init__(self, params):
@@ -205,34 +210,40 @@ class meant_trainer():
             print('Training model on epoch ' + str(self.epoch + ep))
             progress_bar = tqdm(self.train_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
             if self.dataset == 'Tempstock':
-                for graphs, tweets, macds, target in progress_bar:
-                    self.optimizer.zero_grad() 
-                    # should have a separate forward pass function
+                for graphs, tweets, macds, attention_masks, target in progress_bar:
+                    # is the autocasting weird for flash attention?
                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
                         if self.model_name == 'meant':
-                            out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device))
+                            out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device), attention_mask=attention_masks.cuda())
                         elif self.model_name == 'meant_vision':
                             out = model.forward(graphs.to(torch_dtype).to(device))
                         elif self.model_name == 'meant_tweet':
-                            out = model.forward(tweets.long().to(device))
+                            # see if this allows for better fine tuning (it should)
+                            out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
                         elif self.model_name == 'teanet':
                             out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
                         else:
                             # we run without the lag period. Only meant supports this!
                             out = model(tweets[:, 4, :].squeeze(dim=1).to(torch.float32).cuda(), graphs[:, 4, :, :].to(torch_dtype).squeeze(dim=1).cuda())
+                        if torch.isnan(out).any():
+                            print('nans encountered. Current state of performance:')
+                            train_metrics.show()
+                            sys.exit()
                         loss = loss_fct(out, target.to(device).long())                
+                    #loss.backward()
+                    self.optimizer.zero_grad() 
                     scaler.scale(loss).backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    #self.optimizer.step()
                     scaler.step(self.optimizer)
                     scaler.update()
                     out = out.detach().cpu()
-                    target = target.detach().cpu()
                     train_metrics.update(out, target) 
                     del out
                     del target
                     del loss
             elif self.dataset == 'Stocknet':
-                for tweets, prices, target in progress_bar:
+                for tweets, prices, attention_masks, target in progress_bar:
                     self.optimizer.zero_grad() 
                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
                         if self.model_name == 'meant':
@@ -240,11 +251,14 @@ class meant_trainer():
                         elif self.model_name == 'meant_vision':
                             raise ValueError('MEANT_vision is a vision focused model, while Stocknet is a language focused dataset. Use MEANTweet.')
                         elif self.model_name == 'meant_tweet':
-                            out = model.forward(tweets.long().to(device))
+                            # should pass an attention mask
+                            out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
                         elif self.model_name == 'teanet':
                             out = model.forward(tweets.to(torch_dtype).to(device), prices.to(torch_dtype).to(device))
+                        elif self.model_name == 'bertweet' or self.model_name == 'bert' or self.model_name == 'finbert':
+                            out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda())
                         else:
-                            raise ValueError('Model not supported.')
+                            raise ValueError('Model not supported')
                         loss = loss_fct(out, target.to(device).long())                
                     scaler.scale(loss).backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -271,30 +285,32 @@ class meant_trainer():
             with torch.no_grad():
                 val_progress_bar = tqdm(self.val_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
                 if self.dataset == 'Tempstock':
-                    for graphs, tweets, macds, target in self.val_loader:
+                    for graphs, tweets, macds, attention_masks, target in val_progress_bar:
                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
                             if self.model_name == 'meant':
-                                out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device))
+                                out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device), attention_mask=attention_masks.cuda())
                             elif self.model_name == 'meant_vision':
                                 out = model.forward(graphs.to(torch_dtype).to(device))
                             elif self.model_name == 'meant_tweet':
-                                out = model.forward(tweets.long().to(device))
+                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
                             elif self.model_name == 'teanet':
                                 out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
                             else:
                                 out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda(), graphs[:, 4, :, :].to(torch_dtype).squeeze(dim=1).cuda())
                         val_metrics.update(out.detach().cpu(), target) 
                 elif self.dataset == 'Stocknet':
-                    for tweets, prices, target in self.val_loader:
+                    for tweets, prices, attention_masks, target in val_progress_bar:
                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
                             if self.model_name == 'meant':
                                 raise ValueError('MEANT is a multimodal model, while Stocknet is a unimodal dataset. Use MEANTweet.')
                             elif self.model_name == 'meant_vision':
-                                out = model.forward(graphs.to(torch_dtype).to(device))
-                            elif self.model_name == 'meant_tweet':
-                                out = model.forward(tweets.long().to(device))
+                                raise ValueError('MEANT-vision is a computer vision model, while Stocknet is a linguistic dataset. Use MEANTweet.')
+                            elif self.model_name == 'meant_tweet': 
+                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
                             elif self.model_name == 'teanet':
-                                out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
+                                out = model.forward(tweets.to(torch_dtype).to(device), prices.to(torch_dtype).to(device))
+                            elif self.model_name == 'bertweet' or self.model_name == 'bert' or self.model_name == 'finbert':
+                                out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda())
                             else:
                                 raise ValueError('Model not supported.')
                         val_metrics.update(out.detach().cpu(), target) 
@@ -312,9 +328,9 @@ class meant_trainer():
                     patience = 0
                 prev_f1 = val_f1_macro
         try:
-            torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + self.run_id + '_' + str(final_epoch + 1) + '.pt')
-            torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
-            torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
+            torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + str(self.run_id) + '_' + str(final_epoch + 1) + '.pt')
+            #torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
+            #torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
         except FileNotFoundError:
             print('Your filepath is invalid. Save has failed')
 
@@ -325,30 +341,35 @@ class meant_trainer():
             f1_scores = []
             with torch.no_grad():
                 if self.dataset == 'Tempstock':
-                    for graphs, tweets, macds, target in self.test_loader:
+                    for graphs, tweets, macds, attention_masks, target in self.test_loader:
+                        # the autocasting doesn't work with flash attention? Examine bug
+                        # why doesn't this stuff work? What is the problem?????
+                        # let it rip
                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
                             if self.model_name == 'meant':
                                 out = model.forward(tweets.long().to(device), graphs.to(torch_dtype).to(device))
                             elif self.model_name == 'meant_vision':
                                 out = model.forward(graphs.to(torch_dtype).to(device))
                             elif self.model_name == 'meant_tweet':
-                                out = model.forward(tweets.long().to(device))
+                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.to(device))
                             elif self.model_name == 'teanet':
                                 out = model.forward(tweets.to(torch_dtype).to(device), macds.to(torch_dtype).to(device))
                             else:
                                 out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda(), graphs[:, 4, :, :].to(torch_dtype).squeeze(dim=1).cuda())
                         test_metrics.update(out.detach().cpu(), target) 
                 elif self.dataset == 'Stocknet':
-                    for tweets, prices, target in self.test_loader:
+                    for tweets, prices, attention_masks, target in self.test_loader:
                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
                             if self.model_name == 'meant':
                                 raise ValueError('MEANT is a multimodal model, while Stocknet is a unimodal dataset. Use MEANTweet.')
                             elif self.model_name == 'meant_vision':
                                 raise ValueError('MEANT_vision is a vision focused model, while Stocknet is a language focused dataset. Use MEANTweet.')
-                            elif self.model_name == 'meant_tweet':
-                                out = model.forward(tweets.long().to(device))
+                            elif self.model_name == 'meant_tweet' or self.model_name == 'bertweet':
+                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
                             elif self.model_name == 'teanet':
                                 out = model.forward(tweets.to(torch_dtype).to(device), prices.to(torch_dtype).to(device))
+                            elif self.model_name == 'bertweet' or self.model_name == 'bert' or self.model_name == 'finbert':
+                                out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda())
                             else:
                                 raise ValueError('Model not supported.')
                         test_metrics.update(out.detach().cpu(), target) 
@@ -376,7 +397,7 @@ if __name__=='__main__':
 
     # Training loop 
     parser.add_argument('-e', '--epoch', type = int, help = 'Current epoch at start of training', default=0)
-    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=1)
+    parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=10)
     parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=False, default=False)
     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
     parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 16)
@@ -423,12 +444,14 @@ if __name__=='__main__':
                 model = AutoModelForTokenClassification.from_pretrained(args.hugging_face_model).to(device)
             else: 
                 print('Training model from scratch')
-                config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
                 if args.model_name == 'vl_bert':
                     # use pretrained model for TESTING 
                     #vl_bert_model = VisualBertModel._from_config(config).cuda()
                     # using pretrained VisualBERT
                     # rerun these experiments
+                    # fuck it lets move on
+
+                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
                     vl_bert_model = VisualBertModel.from_pretrained("uclanlp/visualbert-vqa-coco-pre")
                     vl_bert_model.embeddings.word_embeddings = bertweet.embeddings.word_embeddings
                     model = vl_BERT_Wrapper(vl_bert_model, 768, 2).cuda()
@@ -437,9 +460,26 @@ if __name__=='__main__':
                     #vilt = ViltModel._from_config(config)
                     # using pretrained ViLT
                     # rerun these experiments
+
+                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
                     vilt = ViltModel.from_pretrained("dandelin/vilt-b32-mlm")
                     vilt.embeddings.text_embeddings.word_embeddings = bertweet.embeddings.word_embeddings
                     model = ViltWrapper(vilt, 768, 2).to(device) 
+                elif args.model_name == 'bertweet':
+
+                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                    model = bertweet_wrapper(bertweet, 768, 2).to(device)
+                elif args.model_name == 'bert':
+                    model = BertModel.from_pretrained("bert-base-uncased").cuda()
+                    model = bertweet_wrapper(model, 768, 2)
+                    model.bertweet.embeddings = bertweet.embeddings
+                    model = model.cuda()
+                elif args.model_name == 'finbert':
+                    # we use the bertweet embeddings because that is how the tweets were prepared
+                    fin_bert = AutoModel.from_pretrained('ProsusAI/finbert')
+                    model = bertweet_wrapper(fin_bert, 768, 2)
+                    model.bertweet.embeddings = bertweet.embeddings
+                    model = model.cuda()
         elif args.model_name == 'meant':
             # do we need the embedding layer if we have already used the flair nlp embeddings?
             model = meant(text_dim = 768, 
@@ -451,7 +491,20 @@ if __name__=='__main__':
                 lag = args.lag, 
                 num_classes = args.num_classes, 
                 embedding = bertweet.embeddings,
+                flash=False,
                 num_encoders=args.num_encoders).to(device)
+            if args.num_encoders == 12:
+                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+            elif args.num_encoders == 24:
+                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+            elif args.num_encoders == 1:
+                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
+            pretrained_vision = torch.load('/work/nlp/b.irving/meant_runs/models/meant_vision_encoder/meant_vision_encoder_Tempstock_0.pt').to(device)
+            model.languageEncoders = language_encoders.languageEncoders
+            model.visionEncoders = pretrained_vision.visionEncoders
+            del pretrained_vision
+            del language_encoders
+            gc.collect()
         elif args.model_name == 'meant_vision':
             model = meant_vision(
                 image_dim = 768, 
@@ -461,14 +514,25 @@ if __name__=='__main__':
                 patch_res = 16, 
                 lag = args.lag, 
                 num_classes = args.num_classes, 
+                flash=True, 
                 num_encoders=args.num_encoders).to(device)
         elif args.model_name == 'meant_tweet':
             model = meant_tweet(text_dim = 768, 
                 price_dim = 4, 
                 lag = args.lag, 
                 num_classes = args.num_classes, 
+                flash=True,
                 embedding = bertweet.embeddings,
                 num_encoders=args.num_encoders).to(device) 
+            if args.num_encoders == 12:
+                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+            elif args.num_encoders == 24:
+                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+            elif args.num_encoders == 1:
+                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
+            model.languageEncoders = language_encoders.languageEncoders
+            del language_encoders 
+            gc.collect()
         elif args.model_name == 'teanet':
             model = teanet(5, 128, 2, 5, 12, 10).cuda()
         else:
@@ -519,13 +583,14 @@ if __name__=='__main__':
             tweets = np.ones(graphs.shape[0], 1).astype(np.float32)
         elif args.language_only:
             tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
+            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
             graphs = np.ones(tweets.shape[0], 1).astype(np.float32)
         else:
             graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
-            tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy')
+            tweets = np.load('/work/nlp/b.irving/stock/complete/all_original_tweets_resampled_5.npy')
+            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
             macds = np.load('/work/nlp/b.irving/stock/complete/macds_5.npy')
             labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')
-
         if args.normalize:
             print('Normalizing data...')
             # our memmap arrays are read-only
@@ -540,31 +605,33 @@ if __name__=='__main__':
             print('Data normalized.')
 
         # First split: Separate out the test set
-        graphs_train_val, graphs_test, tweets_train_val, tweets_test, macds_train_val, macds_test, y_train_val, y_test = train_test_split(
-            graphs, tweets, macds, labels, test_size=0.2, random_state=42)
+        graphs_train_val, graphs_test, tweets_train_val, tweets_test, macds_train_val, macds_test, attention_masks_train_val, attention_masks_test, y_train_val, y_test = train_test_split(
+            graphs, tweets, macds, attention_masks, labels, test_size=0.2, random_state=42)
 
         # clear up memory
         del graphs
         del tweets
         del macds
         del labels
+        del attention_masks
         gc.collect()
 
         # Second split: Split the remaining data into training and validation sets
-        graphs_train, graphs_val, tweets_train, tweets_val, macds_train, macds_val, y_train, y_val= train_test_split(
-            graphs_train_val, tweets_train_val, macds_train_val, y_train_val, test_size=0.25, random_state=42) 
+        graphs_train, graphs_val, tweets_train, tweets_val, macds_train, macds_val, attention_masks_train, attention_masks_val, y_train, y_val= train_test_split(
+            graphs_train_val, tweets_train_val, macds_train_val, attention_masks_train_val, y_train_val, test_size=0.25, random_state=42) 
         
         del macds_train_val
         del y_train_val
         del tweets_train_val
         del graphs_train_val
+        del attention_masks_train_val
         # use here, because a signficant amount of memory can be reclaimed
         gc.collect()
         
         # create a dataLoader object
-        train_dataset = customDataset(graphs_train, tweets_train, macds_train, y_train)
-        val_dataset = customDataset(graphs_val, tweets_val, macds_val, y_val)
-        test_dataset = customDataset(graphs_test, tweets_test, macds_test, y_test)
+        train_dataset = customDataset(graphs_train, tweets_train, macds_train, attention_masks_train, y_train)
+        val_dataset = customDataset(graphs_val, tweets_val, macds_val, attention_masks_val, y_val)
+        test_dataset = customDataset(graphs_test, tweets_test, macds_test, attention_masks_test, y_test)
 
         # pass these to our training loop
         train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, pin_memory=True)
@@ -576,6 +643,11 @@ if __name__=='__main__':
         gc.collect()
     elif args.dataset == 'Stocknet':
         tweets = np.load('/scratch/irving.b/stock/stocknet_tweets.npy')
+       # attention_masks = (tweets != 1).long()
+       # np.save('/scratch/irving.b/attention_masks)
+       # print(tweets[0:10])
+       # sys.exit()
+        attention_masks = np.load('/scratch/irving.b/stock/attention_masks.npy')
         prices = np.load('/scratch/irving.b/stock/stocknet_prices.npy')
         labels = np.load('/scratch/irving.b/stock/stocknet_labels.npy')
         if args.normalize:
@@ -585,25 +657,27 @@ if __name__=='__main__':
             prices -= np.mean(prices)
             prices/= np.std(prices)
             print('Data normalized.')
-        tweets_train_val, tweets_test, prices_train_val, prices_test, y_train_val, y_test = train_test_split(
-            tweets, prices, labels, test_size=0.2, random_state=42)
+        tweets_train_val, tweets_test, prices_train_val, prices_test, attention_masks_train_val, attention_masks_test, y_train_val, y_test = train_test_split(
+            tweets, prices, attention_masks, labels, test_size=0.2, random_state=42)
         del tweets
         del prices 
+        del attention_masks
         del labels
         gc.collect()
-        tweets_train, tweets_val, prices_train, prices_val, y_train, y_val= train_test_split(
-            tweets_train_val, prices_train_val, y_train_val, test_size=0.25, random_state=42) 
+        tweets_train, tweets_val, prices_train, prices_val, attention_masks_train, attention_masks_val, y_train, y_val= train_test_split(
+            tweets_train_val, prices_train_val, attention_masks_train_val, y_train_val, test_size=0.25, random_state=42) 
         del prices_train_val 
         del y_train_val
         del tweets_train_val
+        del attention_masks_train_val
         gc.collect()
-        train_dataset = customDataset_stocknet(tweets_train, prices_train, y_train)
-        val_dataset = customDataset_stocknet(tweets_val, prices_val, y_val)
-        test_dataset = customDataset_stocknet(tweets_test, prices_test, y_test)
+        train_dataset = customDataset_stocknet(tweets_train, prices_train, attention_masks_train, y_train)
+        val_dataset = customDataset_stocknet(tweets_val, prices_val, attention_masks_val, y_val)
+        test_dataset = customDataset_stocknet(tweets_test, prices_test, attention_masks_test, y_test)
         train_loader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, pin_memory=True)
         val_loader = DataLoader(val_dataset, batch_size=args.eval_batch_size, shuffle=False, pin_memory=True)
         test_loader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=False, pin_memory=True)
-        del tweets_train, prices_train, prices_val, tweets_val, tweets_test, prices_test, y_train, y_val, y_test
+        del tweets_train, prices_train, prices_val, tweets_val, tweets_test, prices_test, y_train, y_val, y_test, attention_masks_train, attention_masks_val, attention_masks_test
         gc.collect()
 
     print('Data prepared.')

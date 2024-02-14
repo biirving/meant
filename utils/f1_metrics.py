@@ -34,7 +34,7 @@ class f1_metrics():
         return (acc, f1_macro, f1_micro, precision_macro, 
                 precision_micro, recall_macro, recall_micro)
 
-    def show(self):
+    def show(self, _class=None):
         (accuracy, 
         f1_macro, 
         f1_micro, 
@@ -49,4 +49,11 @@ class f1_metrics():
         print('Micro ' + self.set_name + ' precision: ', precision_micro)
         print('Macro ' + self.set_name + ' recall: ', recall_macro)
         print('Micro ' + self.set_name + ' recall: ', recall_micro)
+        if _class is not None:
+            print('Macro ' + self.set_name + ' f1 for class ' + str(_class), f1_macro[_class].item())
+            print('Micro ' + self.set_name + ' f1 for class ' + str(_class), f1_micro[_class])
+            print('Macro ' + self.set_name + ' precision for class ' + str(_class), precision_macro[_class])
+            print('Micro ' + self.set_name + ' precision for class ' + str(_class), precision_micro[_class])
+            print('Macro ' + self.set_name + ' recall for class  ' + str(_class), recall_macro[_class])
+            print('Micro ' + self.set_name + ' recall for class ' + str(_class), recall_micro[_class])
         return f1_macro, f1_micro
