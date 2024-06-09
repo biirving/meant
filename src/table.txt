@@ -1,0 +1,14 @@
+457
+ticker
+DHI    32
+HWM    31
+PCG    30
+LEN    28
+DG     28
+       ..
+NWS    10
+KMI    10
+REG     9
+DOV     9
+HES     1
+Name: count, Length: 457, dtype: int64

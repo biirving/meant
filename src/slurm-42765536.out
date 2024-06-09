@@ -1,0 +1,23 @@
+/work/nlp/b.irving/.conda/envs/helios/lib/python3.10/site-packages/torch/_utils.py:831: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  return self.fget.__get__(instance, owner)()
+Meant x large
+Preparing data...
+Data prepared.
+meant
+Epoch 1/10:   0%|          | 0/360 [00:00<?, ?it/s]Epoch 1/10:   0%|          | 0/360 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/var/spool/slurmd/job42765536/slurm_script", line 959, in <module>
+    train.train()
+  File "/var/spool/slurmd/job42765536/slurm_script", line 224, in train
+    out = self.model.forward(**batch)
+  File "/work/nlp/b.irving/meant/src/../src/meant/meant.py", line 290, in forward
+    words = encoder.forward(words, attention_mask)
+  File "/work/nlp/b.irving/meant/src/../src/meant/meant.py", line 139, in forward
+    inter = mod(inter, attention_mask)
+  File "/work/nlp/b.irving/.conda/envs/helios/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1518, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/work/nlp/b.irving/.conda/envs/helios/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1527, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/work/nlp/b.irving/meant/src/../src/meant/xPosAttention.py", line 61, in forward
+    weights = torch.softmax(scores, dim=-1)
+torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 640.00 MiB. GPU 0 has a total capacty of 39.39 GiB of which 367.56 MiB is free. Including non-PyTorch memory, this process has 39.02 GiB memory in use. Of the allocated memory 37.83 GiB is allocated by PyTorch, and 709.11 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting max_split_size_mb to avoid fragmentation.  See documentation for Memory Management and PYTORCH_CUDA_ALLOC_CONF

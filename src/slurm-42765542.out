@@ -1,0 +1,15 @@
+/work/nlp/b.irving/.conda/envs/helios/lib/python3.10/site-packages/torch/_utils.py:831: UserWarning: TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()
+  return self.fget.__get__(instance, owner)()
+Meant x large
+pretrained
+Meant x large
+Traceback (most recent call last):
+  File "/var/spool/slurmd/job42765542/slurm_script", line 615, in <module>
+    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+  File "/work/nlp/b.irving/.conda/envs/helios/lib/python3.10/site-packages/torch/serialization.py", line 1014, in load
+    return _load(opened_zipfile,
+  File "/work/nlp/b.irving/.conda/envs/helios/lib/python3.10/site-packages/torch/serialization.py", line 1422, in _load
+    result = unpickler.load()
+  File "/work/nlp/b.irving/.conda/envs/helios/lib/python3.10/site-packages/torch/serialization.py", line 1415, in find_class
+    return super().find_class(mod_name, name)
+ModuleNotFoundError: No module named 'meant'
