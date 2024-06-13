@@ -9,12 +9,17 @@ class temporal_2(nn.Module):
         super(temporal_2, self).__init__()
         self.num_heads = num_heads
         self.dim = dim
+        self.sequence_length=sequence_length
+        self.lag=lag
+        # Is this 0?
         self.Dh = int(self.dim / self.num_heads)
         self.dropout = nn.Dropout(droput)
         self.mask = mask
 
         self.softmax = nn.Softmax(dim=-1)
-        self.multi_mad = nn.Linear(lag * self.num_heads * self.Dh, self.dim)
+        # By projection inside of here, 
+        # You cannot chain these encoders (which might not serve you well)
+        self.multi_mad = nn.Sequential(nn.Linear(lag * self.num_heads * self.Dh, self.dim))
 
         self.sequence_length = sequence_length
 
@@ -27,14 +32,14 @@ class temporal_2(nn.Module):
         self.xPos = rot_embed
         self.apply(weights_init)
 
-    def forward(self, input):
+    def forward(self, input, attention_mask=None):
         b, l, _, _ = input.shape
 
+        # make relationships across all of them?
         q_mat, v_mat, k_mat = map(lambda t: rearrange(t, 'b l s (h d) -> b l h s d', h=self.num_heads), 
-                                  (self.q(input[:, l - 1, :, :]).view(b, 1, self.sequence_length, self.atten_size),
-                                   self.v(input[:, l - 1, :, :]).view(b, 1, self.sequence_length, self.atten_size), 
+                                  (self.q(input[:, self.lag - 1, :, :]).view(b, 1, self.sequence_length, self.atten_size),
+                                   self.v(input), 
                                    self.k(input)))
-
         
         if self.xPos is not None:
             q_mat, k_mat = self.xPos.rotate_queries_and_keys(q_mat, k_mat)
@@ -46,14 +51,19 @@ class temporal_2(nn.Module):
             mask = torch.tril(torch.ones(scores.size(-1), scores.size(-1))).unsqueeze(0).unsqueeze(1).to(input.device)
             scores = scores.masked_fill(mask == 0, float('-inf'))
 
-        # Use numerically stable softmax
         scores_max, _ = torch.max(scores, dim=-1, keepdim=True)
         scores = scores - scores_max
+
+        if attention_mask is not None:
+            attention_mask = 1 - attention_mask.unsqueeze(dim=2).unsqueeze(dim=3)
+            scores = scores + attention_mask * -1e9
+
         weights = torch.softmax(scores, dim=-1)
         
         # Apply attention weights to values
         inter = torch.matmul(weights, v_mat)
-        # Reshape for the linear layer
+
+        # Use a class token, mean, or projection?
         inter = rearrange(inter, 'b l h s d -> b s (l h d)')
         output = self.multi_mad(inter)
-        return output
+        return output.squeeze(dim=-1)

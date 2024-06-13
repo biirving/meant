@@ -4,6 +4,9 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from src.utils.rotary import apply_rot_emb, AxialRotaryEmbedding, RotaryEmbedding
 
+# Code adapted from Phil Wang
+
+
 # helpers
 
 def exists(val):
@@ -255,9 +258,8 @@ class TimeSformer(nn.Module):
         #cls_token = x[:, 0]
         return x
 
-    def forward(self, **kwargs):
-        video = kwargs.get('pixels')
-        x = self.meant_forward(video, mask = None)
+    def forward(self, video, mask = None):
+        x = self.meant_forward(video, mask=mask)
         return self.to_out(x[:, 0])
     
     

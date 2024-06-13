@@ -102,7 +102,7 @@ class languageEncoder(nn.Module):
         self.num_heads = num_heads
 
         self.xPos = RotaryEmbedding(
-            dim = 48,
+            dim = 30,
             use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
             #xpos_scale_base=2
         )
@@ -156,7 +156,7 @@ class temporalEncoder(nn.Module):
 
         if use_rot_embed:
             self.xPos = RotaryEmbedding(
-                dim = 48,
+                dim = 37,
                 use_xpos = True,   # set this to True to make rotary embeddings extrapolate better to sequence lengths greater than the one used at training time
                 #xpos_scale_base=2
             )
@@ -199,8 +199,9 @@ class temporalEncoder(nn.Module):
         return x
 
 
-class meant_timesformer(nn.Module):
-    def __init__(self, text_dim, image_dim, price_dim, height, width, patch_res, lag, num_classes, embedding=None, flash=False, num_heads= 8, num_encoders = 1, channels=3, seq_len=512):
+class meant_mosi(nn.Module):
+    # what happens if I try to just use the embedding layer anyways?
+    def __init__(self, text_dim, image_dim, height, width, patch_res, lag, num_classes, embedding=None, flash=False, num_heads= 8, num_encoders = 1, channels=3, seq_len=512):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -213,7 +214,7 @@ class meant_timesformer(nn.Module):
         
         returns: A classification vector, of size num_classes
         """
-        super(meant_timesformer, self).__init__()
+        super(meant_mosi, self).__init__()
 
         # recent additions for editing purposes
         self.lag = lag
@@ -221,7 +222,7 @@ class meant_timesformer(nn.Module):
         self.image_dim = image_dim
 
         # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
-        self.dim = text_dim  + price_dim #+ image_dim
+        self.dim = text_dim  
         self.num_heads = num_heads
 
         # for the image component of the encoder
@@ -252,41 +253,60 @@ class meant_timesformer(nn.Module):
         # Instead of using a vision encoder, use TimeSFormer for your 
         # Image encoding?
         self.timesformer = TimeSformer(dim=image_dim, 
-        image_size=224,
-        patch_size=patch_res,
+        image_size=20,
+        patch_size=1,
         num_frames=lag, 
         num_classes=num_classes,
-        depth=1,
+        depth=num_encoders,
         heads=8,
         dim_head=64,
         attn_dropout = 0.1,
-        ff_dropout = 0.1
+        ff_dropout = 0.1,
+        channels=1
         )
 
-        self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash) for i in range(num_encoders)])
+        self.languageEncoders = nn.ModuleList([languageEncoder(self.text_dim, num_heads, flash=flash) for i in range(num_encoders)])
 
+        # we can try the dual encoder route, and then use cross attention of some kind?
+        # Should I use cross attention in my base model? For MEANT? This could help tremendously...
+
+        # I don't really want to do patch embedding though right?
+        # just some sort of cross attention, to align the
+        # text and the images
+        self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads, flash=flash) for i in range(num_encoders)])
+        self.patchEmbed = nn.Sequential(
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
+            nn.Linear(self.patch_dim, image_dim))
+
+
+        self.visinoEncoders = nn.ModuleList([])
     
-        # testing to see if projecting through a parameterization 
-        # helps at all
-        # A better representation of our entire sequences
+        self.embedding = nn.ModuleList([embedding])
 
-        self.lang_proj = nn.Sequential(nn.Linear(seq_len, 1), nn.LayerNorm(1), nn.GELU())
+        self.lang_proj = nn.Sequential(nn.Linear(self.text_dim, 1), nn.LayerNorm(1), nn.GELU())
         # Should have just made a new class called MEANT TimeSFormer
+
+        # Don't know if I need this
         self.image_proj = nn.Sequential(nn.Linear(981, 1), nn.LayerNorm(1), nn.GELU())
 
         # so we are printing out everything in here
 
         # we are going to try some different stuff
-        self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag, use_rot_embed=True)])
+        self.temporal_encoding = nn.ModuleList([temporalEncoder(self.text_dim, num_heads, lag, use_rot_embed=False)])
 
         # output head
-        self.other_dim=1541
+        # Gonna have to refactor this
+        self.other_dim=788
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.other_dim), nn.Linear(self.other_dim, num_classes), nn.Sigmoid()])
 
         self.seq_len = seq_len
 
+
+    # It is not going to work just straight out of the box
+    # Maybe think for a second: Huh, what could be going wrong?
+    # Also, remove the mean pooling completely.
     def forward(self, **kwargs):
-        tweets = kwargs.get('input_ids')
+        words = kwargs.get('input_ids')
         labels = kwargs.get('labels')
         prices = kwargs.get('prices')
         images = kwargs.get('pixels')
@@ -295,49 +315,64 @@ class meant_timesformer(nn.Module):
         attention_mask = kwargs.get('attention_mask')
         _batch = images.shape[0]
 
-        words = tweets.view(_batch * self.lag, tweets.shape[2])
+        #words = words.view(_batch, self.lag, words.shape[2])
+
+        #if attention_mask is not None:
+        #    attention_mask = attention_mask.view(_batch, self.lag, attention_mask.shape[2])
 
         for mod in self.embedding:
-            words = mod(words)
+            words = mod(words, attention_mask) 
 
-        if attention_mask is not None:
-            attention_mask = attention_mask.view(_batch * self.lag, attention_mask.shape[2])
+        
+        # so it spits out some arbitrary length sequence...
+            
+        # Interesting...
+        # So the visual data is not actually visual data
 
+        # I would have to process the videos myself? Fucking bullshit
+        # Would also take a shit ton of work
+
+        # We need a visual attention mask?
+        # Now we can align our text and image modalities?
+
+        # Should just not bother with the attention mask for now
         for encoder in self.languageEncoders:
-            words = encoder.forward(words, attention_mask)
+            words = encoder.forward(words, attention_mask=attention_mask)
 
-        words = rearrange(words, '(b l) s d-> b l d s', b = _batch)
+
+        #words = rearrange(words, '(b l) s d-> b l d s', b = _batch)
         # Lets try with a TimeSFormer as well. Why not?
 
-        # Pixel mask!
-        images = self.timesformer.meant_forward(images) #, mask = pixel_mask)
-        images = rearrange(images, 'b p d -> b d p') 
-        #images = rearrange(images, 'b l c h w -> (b l) c h w')
-        #images = self.patchEmbed(images)
-        #for encoder in self.visionEncoders:
-        #    images = encoder.forward(images)
+        # We should use timesformer, but it should return in my lag form?
 
-        #images = rearrange(images, '(b l) n d -> b l d n', b = _batch)
-        # See if this even processes?
-        # Divided space time attention on the graphs?
+        images = self.timesformer.meant_forward(images.unsqueeze(dim=2).unsqueeze(dim=3).half()) #, mask=pixel_mask)
+        images = images[:, 1:, :] 
+        images = rearrange(images, 'b (l s) d-> b l s d', l=self.lag)
+        print(images.shape)
+        print(words.shape)
 
-        act_seq_len = words.shape[3]
-        if act_seq_len < self.seq_len:
-            padding = self.seq_len - act_seq_len 
-            words = nn.functional.pad(words, (0, padding))
+        #act_seq_len = words.shape[3]
+        #if act_seq_len < self.seq_len:
+        #    padding = self.seq_len - act_seq_len 
+        #    words = nn.functional.pad(words, (0, padding))
 
-        # these sequences are projected by a learned embedding strategy
-        words = self.lang_proj(words).squeeze(dim=3)
-        images = self.image_proj(images).squeeze(dim=2)
+        # mosi mosi mosi mosi
+        #words = self.lang_proj(words).squeeze(dim=2)
+        #images = self.image_proj(images).squeeze(dim=2)
 
-        temporal = torch.cat((words, prices), dim = 2)
+        # come on baby
+        # THIS is the dataset this model was MEANT for
+
+        temporal = torch.max(words, dim=1).values
         temporal = temporal.half()
 
         for encoder in self.temporal_encoding:
             temporal = encoder.forward(temporal)
+        # We can try some cross attention? Or passing the concatenated head through something else?
 
-        temporal = temporal.squeeze(dim=1)
-        temporal = torch.cat((temporal, images), dim=1)
+        #temporal = temporal.squeeze(dim=1)
+        # Lets see what we can do with this dataset?
+        temporal = torch.cat((temporal, images[:, -1, :].squeeze(dim=1)), dim=1)
 
         for mod in self.mlpHead:
             temporal = mod(temporal)

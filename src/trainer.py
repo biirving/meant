@@ -38,6 +38,7 @@ from src.meant.simple_mlp import mlpEncoder, LSTMEncoder
 from src.meant.meant_timesformer import meant_timesformer
 from src.meant.timesformer_pytorch import TimeSformer
 from src.meant.meant_mean_pooling import meant_mean_pooling
+from src.meant.meant_mosi import meant_mosi
 from src.utils.custom_datasets import (
     djia_lag_dataset, 
     lag_text_collator, 
@@ -45,7 +46,9 @@ from src.utils.custom_datasets import (
     lag_text_image_collator, 
     tempstock_lag_dataset,
     lag_price_collator,
-    stocknet_dataset)
+    stocknet_dataset, 
+    mosi_dataset,
+    lag_text_image_collator_no_lag)
 
 from src.pretrain_mlm import meant_language_pretrainer
 from src.pretrain_mim import meant_vision_pretrainer
@@ -62,6 +65,7 @@ import torch
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
+import pickle
 
 torch.cuda.empty_cache()
 torch.manual_seed(42)
@@ -196,7 +200,6 @@ class meant_trainer():
 
         # How to load the train, val, and test partitions?
         dataset = self.dataset_class
-        
 
         dataset_args = {'data':self.train_loader, 'tokenizer':self.tokenizer, 
             'use_images':self.use_images, 
@@ -249,15 +252,11 @@ class meant_trainer():
             print('length: ', str(time.time() - t0))
             print('loss total: ', sum(training_loss))
             train_metrics.show() 
-
-            #self.f1_plot(np.array(train_f1_scores))
             self.lr_scheduler.step()
+
             val_metrics = f1_metrics(self.num_classes, 'validation', self.dataset) 
             self.model.eval()
             val_loss = 0
-
-            # Just skipping evalutation step for now
-            """
             print('Evaluating Model...')
             with torch.no_grad():
                 val_progress_bar = tqdm(self.val_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
@@ -279,7 +278,6 @@ class meant_trainer():
                 else:
                     patience = 0
                 prev_f1 = val_f1_macro
-            """
 
         try:
             torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + str(self.run_id) + '_' + str(final_epoch + 1) + '.pt')
@@ -401,6 +399,8 @@ if __name__=='__main__':
         price_dim=5
     elif args.dataset == 'djiaNews':
         price_dim=3
+    elif args.dataset == 'mosi':
+        price_dim=0
 
 
     bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
@@ -668,6 +668,9 @@ if __name__=='__main__':
             tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base")
         elif args.model_name == 'meant_timesformer':
             #tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base")
+            #bert = AutoModel.from_pretrained("roberta-large")
+            #tokenizer = AutoTokenizer.from_pretrained('roberta-large')
+
             fin_bert = AutoModel.from_pretrained('ProsusAI/finbert')
             tokenizer = AutoTokenizer.from_pretrained('ProsusAI/finbert')
             # do we need the embedding layer if we have already used the flair nlp embeddings?
@@ -725,6 +728,24 @@ if __name__=='__main__':
             use_lag = True
             collate_fn = lag_image_collator
             tokenizer = None
+        elif args.model_name == 'meant_mosi':
+            fin_bert = AutoModel.from_pretrained('ProsusAI/finbert')
+            tokenizer = AutoTokenizer.from_pretrained('ProsusAI/finbert')
+            model = meant_mosi(text_dim = 768, 
+                image_dim = 768, 
+                height = 20, 
+                width = 1, 
+                patch_res = 1, 
+                lag = 50, 
+                num_classes = args.num_classes, 
+                flash=False,
+                embedding=fin_bert.embeddings,
+                num_encoders=args.num_encoders).to(device)
+            use_images = True
+            use_tweets = True
+            use_prices = False 
+            use_lag = True
+            collate_fn = lag_text_image_collator_no_lag
         else:
             raise ValueError('Pass a valid model name.')
     else:
@@ -827,11 +848,13 @@ if __name__=='__main__':
         del graphs_train, tweets_train, macds_train, graphs_val, tweets_val, macds_val, graphs_test, tweets_test, macds_test
         gc.collect()
     elif args.dataset == 'Stocknet':
-        train_loader ='/work/nlp/b.irving/stock/stocknet_train.csv' 
-        val_loader = '/work/nlp/b.irving/stock/stocknet_val.csv' 
-        test_loader = '/work/nlp/b.irving/stock/stocknet_test.csv'
+        train_loader ='/work/nlp/b.irving/stock/stocknet_train_2.csv' 
+        val_loader = '/work/nlp/b.irving/stock/stocknet_val_2.csv' 
+        test_loader = '/work/nlp/b.irving/stock/stocknet_test_2.csv'
         dataset_class = stocknet_dataset
     elif args.dataset == 'djiaNews':
+        # why doesn't this work either? Worrying...
+
         #djia_news_df = pd.read_csv('djia_news_final.csv')
 
         # Split the dataset into train (80%), validation (10%), and test (10%)
@@ -871,6 +894,29 @@ if __name__=='__main__':
         val_loader = {'data':val_data, 'graphs':val_graphs, 'labels':'/scratch/irving.b/stock/val_text.csv'}
         test_loader = {'data':test_data, 'graphs':test_graphs, 'labels':'/scratch/irving.b/stock/test_text.csv'}
         dataset_class = tempstock_lag_dataset
+
+    # I am not like the others
+    elif args.dataset == 'mosi':
+        # jank preprocess
+        def drop_entry(dataset):
+            """Drop entries where there's no text in the data."""
+            drop = []
+            for ind, k in enumerate(dataset["text"]):
+                if k.sum() == 0:
+                    drop.append(ind)
+            for modality in list(dataset.keys()):
+                dataset[modality] = np.delete(dataset[modality], drop, 0)
+            return dataset
+        filepath='/scratch/irving.b/Processed/aligned_50.pkl'
+        with open(filepath, "rb") as f:
+            alldata = pickle.load(f)
+        alldata['train'] = drop_entry(alldata['train'])
+        alldata['valid'] = drop_entry(alldata['valid'])
+        alldata['test'] = drop_entry(alldata['test'])
+        train_loader = alldata['train']
+        val_loader = alldata['valid']
+        test_loader = alldata['test']
+        dataset_class = mosi_dataset
 
     print('Data prepared.')
     print(args.model_name)

@@ -254,6 +254,7 @@ class meant_trainer():
                     del target
                     del loss
             elif self.dataset == 'Stocknet':
+                self.model.train()
                 for batch in progress_bar:
                     self.optimizer.zero_grad() 
                     batch = {key: value.to('cuda') for key, value in batch.items()}
@@ -337,6 +338,7 @@ class meant_trainer():
             test_metrics = f1_metrics(self.num_classes, 'test', self.dataset) 
             self.model.eval()
             f1_scores = []
+            test_progress_bar = tqdm(self.test_loader, desc=f'Epoch {ep+1}/{self.num_epochs}')
             with torch.no_grad():
                 if self.dataset == 'Tempstock':
                     for graphs, tweets, macds, attention_masks, target in self.test_loader:
@@ -356,21 +358,18 @@ class meant_trainer():
                                 out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda(), graphs[:, 4, :, :].to(torch_dtype).squeeze(dim=1).cuda())
                         test_metrics.update(out.detach().cpu(), target) 
                 elif self.dataset == 'Stocknet':
-                    for tweets, prices, attention_masks, target in self.test_loader:
-                        with torch.autocast(device_type="cuda", dtype=torch_dtype):
-                            if self.model_name == 'meant':
-                                raise ValueError('MEANT is a multimodal model, while Stocknet is a unimodal dataset. Use MEANTweet.')
-                            elif self.model_name == 'meant_vision':
-                                raise ValueError('MEANT_vision is a vision focused model, while Stocknet is a language focused dataset. Use MEANTweet.')
-                            elif self.model_name == 'meant_tweet' or self.model_name == 'bertweet':
-                                out = model.forward(tweets.long().to(device), attention_mask=attention_masks.cuda())
-                            elif self.model_name == 'teanet':
-                                out = model.forward(tweets.to(torch_dtype).to(device), prices.to(torch_dtype).to(device))
-                            elif self.model_name == 'bertweet' or self.model_name == 'bert' or self.model_name == 'finbert':
-                                out = model(tweets[:, 4, :].squeeze(dim=1).long().cuda())
-                            else:
-                                raise ValueError('Model not supported.')
-                        test_metrics.update(out.detach().cpu(), target) 
+                    with torch.no_grad():
+                        for batch in test_progress_bar:
+                            batch = {key: value.to('cuda') for key, value in batch.items()}
+                            target = batch['label']
+                            with torch.autocast(device_type="cuda", dtype=torch_dtype):
+                                batch['input_ids'] = batch['input_ids'].long()
+                                out = model(**batch)
+                            out = out.detach().cpu()
+                            target = target.detach().cpu()
+                            test_metrics.update(out, target) 
+                            del out
+                            del target
             test_metrics.show()  
             #self.f1_plot(np.array(f1_scores))
 
@@ -398,7 +397,7 @@ if __name__=='__main__':
     parser.add_argument('-ne', '--num_epochs', type=int, help = 'Number of epochs to run training loop', default=10)
     parser.add_argument('-es', '--early_stopping', type=str2bool, help = 'Early stopping is active', nargs='?', const=False, default=False)
     parser.add_argument('-s', '--stoppage', type=float, help='Stoppage value', default=1e-4)
-    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 16)
+    parser.add_argument('-tb', '--train_batch_size', type = int, help = 'Batch size for training step', default = 32)
     parser.add_argument('-eb', '--eval_batch_size',type=int, help='Batch size for evaluation step', default=1)
     parser.add_argument('-tesb', '--test_batch_size',type=int, help='Batch size for test step', default=1)
     parser.add_argument('-testm', '--test_model', type=str2bool, help='Whether or not to test our model', nargs='?', const=True, default=True)
@@ -522,18 +521,21 @@ if __name__=='__main__':
                 flash=True,
                 embedding = bertweet.embeddings,
                 num_encoders=args.num_encoders,
-                seq_len=128).to(device) 
+                sequence_length=128).to(device) 
             if args.num_encoders == 12:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+                #language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+                pass
             elif args.num_encoders == 24:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+                pass
+                #language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
             elif args.num_encoders == 1:
+                pass
                 language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
-            model.languageEncoders = language_encoders.languageEncoders
-            del language_encoders 
+            #model.languageEncoders = language_encoders.languageEncoders
+            #del language_encoders 
             gc.collect()
         elif args.model_name == 'teanet':
-            model = teanet(5, 128, 2, 5, 12, 10).cuda()
+            model = teanet(5, 512, 2, 5, 12, 10, embedding=bertweet.embeddings).cuda()
         else:
             raise ValueError('Pass a valid model name.')
     else:

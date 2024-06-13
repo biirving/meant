@@ -266,11 +266,26 @@ def lag_text_image_collator(batch):
 
     labels = torch.tensor([period['labels'] for period in batch]) 
     pixels = torch.stack([torch.from_numpy(period['pixels']) for period in batch])
+    pixel_mask = (pixels != 0).long()
+    if 'prices' in list(batch[0].keys()):
+        prices = torch.stack([torch.from_numpy(period['prices']) for period in batch])
+        return {'input_ids':input_ids, 'attention_mask':attention_mask, 'prices':prices,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask}
+    else:
+        return {'input_ids':input_ids, 'attention_mask':attention_mask,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask}
+
+def lag_text_image_collator_no_lag(batch):
+    input_ids = torch.nn.utils.rnn.pad_sequence([torch.from_numpy(lag['input_ids']) for lag in batch], batch_first=True, padding_value=0)
+    if input_ids.shape[1] == 1:
+        input_ids = input_ids.squeeze(dim=1)
+    attention_mask = (input_ids != 0).long()  # Creates a mask of 1s for non-padded tokens and 0s for padded        
+    labels = torch.tensor([period['labels'] for period in batch]) 
+    pixels = torch.stack([torch.from_numpy(period['pixels']) for period in batch])
+    pixel_mask = (pixels.sum(dim=(-1, -2, -3)) != 0).long()
     if 'prices' in list(batch[0].keys()):
         prices = torch.stack([torch.from_numpy(period['prices']) for period in batch])
         return {'input_ids':input_ids, 'attention_mask':attention_mask, 'prices':prices,  'pixels':pixels, 'labels':labels}
     else:
-        return {'input_ids':input_ids, 'attention_mask':attention_mask,  'pixels':pixels, 'labels':labels}
+        return {'input_ids':input_ids, 'attention_mask':attention_mask,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask}
 
 def lag_text_collator(batch):
     padded_periods = []
@@ -298,11 +313,16 @@ def lag_text_collator(batch):
 
     attention_mask = (input_ids != 0).long()  # Creates a mask of 1s for non-padded tokens and 0s for padded
     labels = torch.tensor([period['labels'] for period in batch]) 
+    
     if 'prices' in list(batch[0].keys()):
         prices = torch.stack([torch.from_numpy(period['prices']) for period in batch])
-        return {'input_ids':input_ids, 'attention_mask':attention_mask, 'prices':prices, 'labels':labels}
+        to_return = {'input_ids':input_ids, 'attention_mask':attention_mask, 'prices':prices, 'labels':labels}
     else:
-        return {'input_ids':input_ids, 'attention_mask':attention_mask, 'labels':labels}
+        to_return =  {'input_ids':input_ids, 'attention_mask':attention_mask, 'labels':labels}
+    
+
+    return to_return
+
 
 def lag_price_collator(batch):
     labels = torch.tensor([period['labels'] for period in batch]) 
@@ -402,11 +422,12 @@ class stocknet_dataset(Dataset):
             cur_headline = item['text_' + str(i)]
             text = self.tokenizer(cur_headline, truncation=True, max_length=self.max_length)
             headlines.append(text['input_ids'])
-            #prices.append(np.array(item[['high_price_' + str(i), 'low_price_' + str(i), 'adjust_close_price_' + str(i)]].tolist()))
+            prices.append(np.array(item[['high_price_' + str(i), 'low_price_' + str(i), 'adjust_close_price_' + str(i)]].tolist()))
         
-        prices.append(np.array(item[['adjust_close_price_' + str(0),'adjust_close_price_' + str(1), 'adjust_close_price_' + str(2), 'adjust_close_price_' + str(3), 'adjust_close_price_' + str(4)]].tolist()))
+        #prices.append(np.array(item[['adjust_close_price_' + str(0),'adjust_close_price_' + str(1), 'adjust_close_price_' + str(2), 'adjust_close_price_' + str(3), 'adjust_close_price_' + str(4)]].tolist()))
         label = item['label']
-        return {'input_ids':headlines, 'labels':label, 'prices':np.stack(prices, axis=0)}
+        prev_labels = np.array(item[['label_0', 'label_1', 'label_2', 'label_3']])
+        return {'input_ids':headlines, 'labels':label, 'prices':np.stack(prices, axis=0), 'prev_labels':prev_labels}
 
 # This should load the data inside
 class tempstock_lag_dataset(Dataset):
@@ -445,6 +466,7 @@ class tempstock_lag_dataset(Dataset):
         headlines = []
         labels = []
         prices = []
+        prev_labels = []
         label = self.labels.iloc[idx]['label']
         if self.use_tweets and self.use_images and self.use_prices:
             if self.use_lag:
@@ -485,13 +507,15 @@ class tempstock_lag_dataset(Dataset):
                     cur_headline = item['text_' + str(i)]
                     text = self.tokenizer(cur_headline, truncation=True, max_length=self.max_length)
                     headlines.append(text['input_ids'])
-                    prices.append(np.array(item[['EMA12_' + str(i),'EMA26_' + str(i), 'Signal_Line_' + str(i), 'MACD_Histogram_' + str(i), 'MACD_' + str(i)]].tolist()))
+                    # Trying to add the previous 3 labels as well
+                    prices.append(np.array(item[['EMA12_' + str(i),'EMA26_' + str(i), 'Signal_Line_' + str(i), 'MACD_Histogram_' + str(i), 'MACD_' + str(i), ]].tolist()))
                     #prices.append(np.array(item['Low_' + str(i), 'High_' + str(i), 'Open_' + str(i), 'Close_' + str(i), 'Adj Close_' + str(i)]))
             else:
                 cur_headline = item['text_' + str(4)]
                 text = self.tokenizer(cur_headline, truncation=True, max_length=self.max_length)
                 headlines.append(text['input_ids'])
                 prices.append(np.array(item[['EMA12_' + str(4),'EMA26_' + str(4), 'Signal_Line_' + str(4), 'MACD_Histogram_' + str(4), 'MACD_' + str(4)]].tolist()))
+            # Here we can take some inspiration from the previous paper
             return {'input_ids':headlines, 'labels':label, 'prices':np.stack(prices, axis=0)}
         elif self.use_images and self.use_prices:
             if self.use_lag:
@@ -538,3 +562,39 @@ class CSVChunkDataset():
     def get_chunk(self):
         df = pd.read_csv(self.csv_file, skiprows=self.start_row, nrows=self.end_row - self.start_row - 1, names=['text'], lineterminator='\n')
         return df
+
+
+class mosi_dataset(Dataset):
+    def __init__(self, **kwargs):
+        data = kwargs.pop('data', None)
+        if data is None:
+            raise ValueError("Data must be provided")
+        self.data = data
+
+        self.tokenizer = kwargs.get('tokenizer', None)
+        self.max_length = kwargs.get('max_length', 512)
+        self.lag_period = kwargs.get('lag_period', 50)
+        self.use_images = kwargs.get('use_images', True)
+        self.use_text = kwargs.get('use_tweets', True)
+        self.use_lag = kwargs.get('use_lag', True)
+
+        # Load data
+
+    def __len__(self):
+        return self.data['vision'].shape[0]
+
+    def __getitem__(self, idx):
+        vision = self.data['vision'][idx]
+        text = self.data['raw_text'][idx]
+        spectrum_label = self.data['classification_labels'][idx]
+        all_text = []
+
+        tokenized_text = self.tokenizer(text, truncation=True, max_length=self.max_length, add_special_tokens=True)
+
+        # We want to align the text with the video? I guess with the dual encoder stream it doesn't really matter
+
+        if spectrum_label > 0:
+            label = 1
+        else:
+            label = 0
+        return {'input_ids':np.array(tokenized_text['input_ids']),  'pixels':vision, 'labels':label}

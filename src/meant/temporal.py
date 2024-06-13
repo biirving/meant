@@ -12,7 +12,7 @@ A temporal attention mechanism.
 class temporal(nn.Module):
 
     # the default values in the original paper for num_heads and dim are 5 and 50 respectively
-    def __init__(self, num_heads, dim, mask=False, droput=0., rot_embed=None):
+    def __init__(self, num_heads, dim, sequence_length=512, mask=False, droput=0., rot_embed=None):
         super(temporal, self).__init__()
         self.num_heads = num_heads
         self.dim = dim
@@ -36,12 +36,7 @@ class temporal(nn.Module):
         self.k = nn.Linear(self.dim, self.atten_size)
         self.xPos=rot_embed
 
-   
-    # batch, lag, vector
-
-    # But you never had mathematical confidence that it should work
-
-    def forward(self, input):
+    def forward(self, input, attention_mask=None):
         b, l, _ = input.shape
 
         # why is my entire batch returning the same output
@@ -64,11 +59,17 @@ class temporal(nn.Module):
                 scores = scores.masked_fill(mask == 0, float('-inf'))
         applyMask()
 
+        #if attention_mask is not None:
+         #   print(attention_mask.shape)
+        #    attention_mask = 1 - attention_mask.unsqueeze(dim=2)
+         #   print(scores.shape)
+          #  scores = scores + attention_mask * -1e9
+
         # Apply softmax to get attention 
         weights = torch.softmax(scores, dim=-1)
 
         inter = torch.matmul(weights, v_mat)
 
-        inter = rearrange(inter, 'b h l d -> b l (h d)')
+        inter = rearrange(inter, 'b h l d -> b (l h d)')
         output = self.multi_mad(inter)
         return output
