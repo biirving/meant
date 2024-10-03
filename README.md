@@ -8,6 +8,8 @@ For the data, please contact the author: irving.b@northeastern.edu
 A lot of the scripts won't run, because they require paths to data that you don't have. Please contact the authors for information about running tests,
 and to get data.
 
+
+## Other peoples code
 We use the TimeSformer implementation from Phil Wang https://github.com/lucidrains/TimeSformer-pytorch, along with his rotary embedding implementation https://github.com/lucidrains/rotary-embedding-torch. 
 
 We also use FlashAttention https://github.com/Dao-AILab/flash-attention. 
