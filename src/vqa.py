@@ -430,7 +430,7 @@ if __name__=='__main__':
             else: 
                 print('Training model from scratch')
                 if args.model_name == 'vl_bert':
-                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                    config = AutoConfig.from_pretrained('/configs/' + args.model_name +'.json', local_files_only=True)
                     vl_bert_model = VisualBertModel.from_pretrained("uclanlp/visualbert-vqa-coco-pre")
                     vl_bert_model.embeddings.word_embeddings = bertweet.embeddings.word_embeddings
                     model = vl_BERT_Wrapper(vl_bert_model, 768, 2).cuda()
@@ -450,18 +450,6 @@ if __name__=='__main__':
                 embedding = bertweet.embeddings,
                 flash=False,
                 num_encoders=args.num_encoders)
-            if args.num_encoders == 12:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
-            elif args.num_encoders == 24:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
-            elif args.num_encoders == 1:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
-            pretrained_vision = torch.load('/work/nlp/b.irving/meant_runs/models/meant_vision_encoder/meant_vision_encoder_Tempstock_0.pt').to(device)
-            model.languageEncoders = language_encoders.languageEncoders
-            model.visionEncoders = pretrained_vision.visionEncoders
-            model = model.to(device)
-            del pretrained_vision
-            del language_encoders
             gc.collect()
         elif args.model_name == 'meant_vision':
             model = meant_vision(
@@ -482,14 +470,6 @@ if __name__=='__main__':
                 flash=True,
                 embedding = bertweet.embeddings,
                 num_encoders=args.num_encoders).to(device) 
-            if args.num_encoders == 12:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
-            elif args.num_encoders == 24:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
-            elif args.num_encoders == 1:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
-            model.languageEncoders = language_encoders.languageEncoders
-            del language_encoders 
             gc.collect()
         elif args.model_name == 'teanet':
             model = teanet(5, 128, 2, 5, 12, 10).cuda()

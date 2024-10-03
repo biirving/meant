@@ -181,8 +181,6 @@ class trainer():
             lim = min(tweets.shape[0] - (self.train_batch_size * lag) - 1, macd.shape[0] - (self.train_batch_size * lag))
             for train_index in tqdm(range(0, lim, self.train_batch_size)):
                 self.model.zero_grad()
-                # should tokenize in the training loop
-                # because, then we can generalize to other models
                 #x_final_input, labels = self.tokenize_and_align_labels(self.train_data[train_index:train_index+self.train_batch_size])
                 #out = model.forward(x_final_input['input_ids'].to(device))
                 out = model.forward(tweets[train_index:train_index + (lag * batch_size)], 
@@ -289,7 +287,7 @@ if __name__=='__main__':
                 model = AutoModelForTokenClassification.from_pretrained(args.hugging_face_model).to(device)
             else: 
                 print('Training model from scratch')
-                config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                config = AutoConfig.from_pretrained('../configs/' + args.model_name +'.json', local_files_only=True)
                 model = AutoModelForTokenClassification.from_config(config).to(device)
         elif args.model_name == 'meant':
             bertweet = AutoModel.from_pretrained("vinai/bertweet-base")

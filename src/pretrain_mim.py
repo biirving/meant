@@ -176,7 +176,7 @@ class mim_pretrainer():
             t0 = time.time()
             print('Training model on epoch ' + str(self.epoch + ep))
             # Open the HDF5 file
-            with h5py.File('/scratch/irving.b/stock/graphs.hdf5', 'r') as f:
+            with h5py.File('../stock/graphs.hdf5', 'r') as f:
                 # Access your dataset within the file
                 dataset = f['images']
                 # Define chunk size (how many rows you want to read at once)
@@ -314,7 +314,7 @@ if __name__=='__main__':
         multi_gpu = False
 
     #bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
-    bertweet_config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/bertweet.json', local_files_only=True)
+    bertweet_config = AutoConfig.from_pretrained('../configs/bertweet.json', local_files_only=True)
     bertweet = RobertaForMaskedLM._from_config(bertweet_config)
     if(args.epoch == 0):
         # what is the reason for this flag?
@@ -323,16 +323,16 @@ if __name__=='__main__':
                 model = AutoModelForTokenClassification.from_pretrained(args.hugging_face_model).to(device)
             else: 
                 print('Training model from scratch')
-                config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                config = AutoConfig.from_pretrained('../configs/' + args.model_name +'.json', local_files_only=True)
                 if args.model_name == 'vl_bert':
                     vl_bert_model = VisualBertModel._from_config(config).cuda()
                 elif args.model_name == 'vilt':
                     vilt = ViltModel._from_config(config)
                 elif args.model_name == 'roberta_mlm':
-                    config = AutoConfig.from_pretrained("/work/nlp/b.irving/nlp/src/hug/configs/roberta_mlm.json", output_hidden_states=True)
+                    config = AutoConfig.from_pretrained("../configs/roberta_mlm.json", output_hidden_states=True)
                     model = RobertaForMaskedLM._from_config(config).cuda()
         elif args.model_name == 'meant_vision_encoder':
-            config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/vit_mim.json', local_files_only=True)
+            config = AutoConfig.from_pretrained('../configs/vit_mim.json', local_files_only=True)
             vit = ViTForMaskedImageModeling._from_config(config).cuda()
             model = meant_vision_pretrainer(args.num_encoders, vit.decoder, 768).cuda()
             del vit

@@ -14,8 +14,8 @@ FILE FOR SMOTE (Synthetic Minority Over-sampling Technique)
 total_labels = 0
 total_pos = 0
 
-graphs_preprocessed = '/work/nlp/b.irving/stock/graphsPreprocessed'
-tweets_directory = '/work/nlp/b.irving/stock/tweets' 
+graphs_preprocessed = ''
+tweets_directory = ''
 
 tickers = []
 
@@ -64,4 +64,4 @@ for tick in sp500:
     except IndexError:
         tweets_2 = tweets[:249].cpu()
     print(tweets_2.shape)
-    torch.save(tweets_2, '/work/nlp/b.irving/stock/tweets_2/' + tick + '.pt')
+    torch.save(tweets_2, '/PATH/' + tick + '.pt')

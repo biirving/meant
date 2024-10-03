@@ -29,8 +29,8 @@ from torch.utils.tensorboard import SummaryWriter
 import wandb
 import pandas as pd
 
-sys.path.append('/work/nlp/b.irving/michinaga/teanet/models')
-sys.path.append('/work/nlp/b.irving/michinaga/teanet/utils/')
+sys.path.append('teanet/models')
+sys.path.append('teanet/utils/')
 import classicAttention
 from teanet import teanet
 

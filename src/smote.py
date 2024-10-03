@@ -15,11 +15,11 @@ total_labels = 0
 total_pos = 0
 
 
-#graphs_directory = '/work/nlp/b.irving/stock/graphsPreprocessed'
-graphs_directory = '/work/nlp/b.irving/stock/graphs'
-tweets_directory = '/work/nlp/b.irving/stock/tweets_2'
-labels_directory ='/work/nlp/b.irving/stock/labels_2' 
-macd_directory = '/work/nlp/b.irving/stock/macd'
+#graphs_directory = '
+graphs_directory = 'graphs'
+tweets_directory = 'tweets_2'
+labels_directory ='labels_2' 
+macd_directory = 'macd'
 
 tickers = []
 

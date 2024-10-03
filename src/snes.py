@@ -4,8 +4,8 @@ import sys, time, os
 from tqdm import tqdm
 
 # Read CSV files
-dija_price_csv = pd.read_csv('/scratch/irving.b/Combined_News_DJIA.csv')
-price_csv = pd.read_csv('/scratch/irving.b/DJIA_table.csv')
+dija_price_csv = pd.read_csv('Combined_News_DJIA.csv')
+price_csv = pd.read_csv('DJIA_table.csv')
 
 price_djia = pd.merge(dija_price_csv, price_csv, on='Date', how='inner')
 

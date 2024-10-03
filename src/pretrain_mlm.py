@@ -47,7 +47,6 @@ torch.cuda.empty_cache()
 torch.manual_seed(42)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# detecting where nans originate from
 #torch.autograd.set_detect_anomaly(True)
 
 # ensure that this datatype is the same as what the arrays you load in are saved in if doing memmap
@@ -56,7 +55,6 @@ np_dtype = np.float64
 # torch datatype to used for automatic mixed precision training
 torch_dtype = torch.float16
 
-# for argument parsing
 def str2bool(v):
     if isinstance(v, bool):
        return v
@@ -66,9 +64,6 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
-
-# we are not training these models to be temporally aware
-# pretrain a word embedding or not?
 
 class meant_language_pretrainer(nn.Module):
     def __init__(self, num_encoders, mlm_input_dim, embedding, lm_head, flash=False, lag=5, text_dim=768, num_heads=8):
@@ -149,7 +144,6 @@ class mlm_pretrainer():
         if(self.debug_overflow):
             debug_overflow = DebugUnderflowOverflow(self.model)
 
-        # throwing some nans
         loss_fct = nn.CrossEntropyLoss()
 
         training_loss = []
@@ -159,7 +153,6 @@ class mlm_pretrainer():
         global_step=0
         prev_val_loss = float('inf')
 
-        # number of times our model has increased in validation loss
         lost_patience = 0
 
         for ep in range(self.num_epochs):
@@ -184,11 +177,8 @@ class mlm_pretrainer():
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(self.optimizer)
                 scaler.update()
-
-                # take the tensors off the gpu
                 out = out.detach().cpu()
                 target = target.detach().cpu()
-                # clean up memory
                 del out
                 del loss
                 global_step+=self.batch_size
@@ -207,12 +197,10 @@ class mlm_pretrainer():
                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
                         if input_ids.shape[0] % self.batch_size != 0:
                             break 
-                        # we need both a casual and a attention mask
                         out = self.model(input_ids, attention_mask=attention_mask)
                         target = batch['labels'].squeeze(dim=1).cuda()
                         loss = loss_fct(out.view(-1, self.config.vocab_size), target.view(-1))
                         val_step += self.batch_size
-                        # track the val loss with tensorboard
                         writer.add_scalar("charts/val_loss", loss, val_step)
                         val_loss += loss.item()
 
@@ -294,7 +282,7 @@ if __name__=='__main__':
         multi_gpu = False
 
     #bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
-    bertweet_config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/bertweet.json', local_files_only=True)
+    bertweet_config = AutoConfig.from_pretrained('../configs/bertweet.json', local_files_only=True)
     bertweet = RobertaForMaskedLM._from_config(bertweet_config)
     if(args.epoch == 0):
         # what is the reason for this flag?
@@ -303,13 +291,13 @@ if __name__=='__main__':
                 model = AutoModelForTokenClassification.from_pretrained(args.hugging_face_model).to(device)
             else: 
                 print('Training model from scratch')
-                config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                config = AutoConfig.from_pretrained('../configs/' + args.model_name +'.json', local_files_only=True)
                 if args.model_name == 'vl_bert':
                     vl_bert_model = VisualBertModel._from_config(config).cuda()
                 elif args.model_name == 'vilt':
                     vilt = ViltModel._from_config(config)
                 elif args.model_name == 'roberta_mlm':
-                    config = AutoConfig.from_pretrained("/work/nlp/b.irving/nlp/src/hug/configs/roberta_mlm.json", output_hidden_states=True)
+                    config = AutoConfig.from_pretrained("../configs/roberta_mlm.json", output_hidden_states=True)
                     model = RobertaForMaskedLM._from_config(config).cuda()
         elif args.model_name == 'meant_language_encoder':
             # which are basically just robertabase embeddings
@@ -371,7 +359,7 @@ if __name__=='__main__':
 
     print('Loading data...')
 
-    pretrain_data_path = '/work/nlp/b.irving/stock/pretrain_dataset.parquet'
+    pretrain_data_path = '../stock/pretrain_dataset.parquet'
     data = pd.read_parquet(pretrain_data_path)
     data_list = data['text'].iloc[:].tolist()
     train_tweets, val_tweets = train_test_split(data_list, test_size=0.1, random_state=42)
@@ -382,7 +370,6 @@ if __name__=='__main__':
     train_loader = DataLoader(train, shuffle=True, batch_size=args.batch_size, pin_memory=True)
     val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size, pin_memory=True)
     
-    # then delete the data that we don't need to pass 
     del data
     del data_list
     del train
@@ -391,7 +378,6 @@ if __name__=='__main__':
 
     print('Data loaded')
 
-    # is there a way to pretrain the temporal component of the model?
 
     params = {
 

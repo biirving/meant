@@ -41,8 +41,8 @@ from torch.utils.tensorboard import SummaryWriter
 import wandb
 import pandas as pd
 
-sys.path.append('/work/nlp/b.irving/michinaga/teanet/models')
-sys.path.append('/work/nlp/b.irving/michinaga/teanet/utils/')
+sys.path.append('../michinaga/teanet/models')
+sys.path.append('../michinaga/teanet/utils/')
 import classicAttention
 from teanet import teanet
 
@@ -52,14 +52,8 @@ from teanet import teanet
 torch.cuda.empty_cache()
 torch.manual_seed(42)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# ensure that this datatype is the same as what the arrays you load in are saved in if doing memmap
 np_dtype = np.float64
-
-# torch datatype to used for automatic mixed precision training
 torch_dtype = torch.float16
-
-# I don't know what the problem is
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -501,12 +495,12 @@ if __name__=='__main__':
                 flash=False,
                 num_encoders=args.num_encoders).to(device)
             if args.num_encoders == 12:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+                language_encoders = torch.load('')
             elif args.num_encoders == 24:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+                language_encoders = torch.load('')
             elif args.num_encoders == 1:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
-            pretrained_vision = torch.load('/work/nlp/b.irving/meant_runs/models/meant_vision_encoder/meant_vision_encoder_Tempstock_0.pt').to(device)
+                language_encoders = torch.load('')
+            pretrained_vision = torch.load('')
             model.languageEncoders = language_encoders.languageEncoders
             model.visionEncoders = pretrained_vision.visionEncoders
             del pretrained_vision
@@ -532,17 +526,6 @@ if __name__=='__main__':
                 embedding = bertweet.embeddings,
                 num_encoders=args.num_encoders,
                 sequence_length=128).to(device) 
-            if args.num_encoders == 12:
-                #language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
-                pass
-            elif args.num_encoders == 24:
-                pass
-                #language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
-            elif args.num_encoders == 1:
-                pass
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
-            #model.languageEncoders = language_encoders.languageEncoders
-            #del language_encoders 
             gc.collect()
         elif args.model_name == 'teanet':
             model = teanet(5, 512, 2, 5, 12, 10, embedding=bertweet.embeddings).cuda()
@@ -616,18 +599,18 @@ if __name__=='__main__':
     if args.dataset == 'Tempstock':
         assert not (args.image_only == True and args.language_only == True), 'Cannot be an image only AND a language only task'
         if args.image_only:
-            graphs = np.memmap('/work/nlp/b.irving/stock/complete/graphs_5.npy', dtype=np_dtype, mode='r')
+            graphs = np.memmap('.../graphs_5.npy', dtype=np_dtype, mode='r')
             tweets = np.ones(graphs.shape[0], 1).astype(np.float32)
         elif args.language_only:
-            tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
-            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
+            tweets = np.load('.../tweets_5.npy', dtype=np_dtype, mode='r')
+            attention_masks = np.load('.../attention_masks.npy')
             graphs = np.ones(tweets.shape[0], 1).astype(np.float32)
         else:
-            graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
-            tweets = np.load('/work/nlp/b.irving/stock/complete/all_original_tweets_resampled_5.npy')
-            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
-            macds = np.load('/work/nlp/b.irving/stock/complete/macds_5.npy')
-            labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')
+            graphs = np.load('.../graphs_5.npy')
+            tweets = np.load('.../all_original_tweets_resampled_5.npy')
+            attention_masks = np.load('.../attention_masks.npy')
+            macds = np.load('.../macds_5.npy')
+            labels = np.load('.../y_resampled_5.npy')
         if args.normalize:
             print('Normalizing data...')
             # our memmap arrays are read-only
@@ -679,14 +662,10 @@ if __name__=='__main__':
         del graphs_train, tweets_train, macds_train, graphs_val, tweets_val, macds_val, graphs_test, tweets_test, macds_test
         gc.collect()
     elif args.dataset == 'Stocknet':
-        tweets = np.load('/scratch/irving.b/stock/stocknet_tweets.npy')
-       # attention_masks = (tweets != 1).long()
-       # np.save('/scratch/irving.b/attention_masks)
-       # print(tweets[0:10])
-       # sys.exit()
-        attention_masks = np.load('/scratch/irving.b/stock/attention_masks.npy')
-        prices = np.load('/scratch/irving.b/stock/stocknet_prices.npy')
-        labels = np.load('/scratch/irving.b/stock/stocknet_labels.npy')
+        tweets = np.load('.../stocknet_tweets.npy')
+        attention_masks = np.load('.../attention_masks.npy')
+        prices = np.load('.../stocknet_prices.npy')
+        labels = np.load('.../stocknet_labels.npy')
         if args.normalize:
             print('Normalizing data...')
             tweets -= np.mean(tweets)

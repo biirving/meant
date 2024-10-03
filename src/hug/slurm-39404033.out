@@ -1,0 +1,257 @@
+2023-11-08 00:34:00.406082: E tensorflow/compiler/xla/stream_executor/cuda/cuda_dnn.cc:9342] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2023-11-08 00:34:00.406142: E tensorflow/compiler/xla/stream_executor/cuda/cuda_fft.cc:609] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2023-11-08 00:34:00.406174: E tensorflow/compiler/xla/stream_executor/cuda/cuda_blas.cc:1518] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2023-11-08 00:34:00.417390: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2023-11-08 00:34:03.499459: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+Found cached dataset conll2003 (/home/irving.b/.cache/huggingface/datasets/conll2003/conll2003/1.0.0/9a4d16a94f8674ba3466315300359b0acd891b68b6c8743ddf60b9c702adce98)
+hugging face dataset:  conll2003
+Training model from scratch
+  0%|          | 0/3 [00:00<?, ?it/s]100%|██████████| 3/3 [00:00<00:00, 302.50it/s]
+  0%|          | 0/1755 [00:00<?, ?it/s]  0%|          | 1/1755 [00:42<20:50:06, 42.76s/it]  0%|          | 2/1755 [01:25<20:48:20, 42.73s/it]  0%|          | 3/1755 [02:07<20:38:57, 42.43s/it]  0%|          | 4/1755 [02:49<20:38:07, 42.43s/it]  0%|          | 5/1755 [03:32<20:35:26, 42.36s/it]  0%|          | 6/1755 [04:14<20:35:05, 42.37s/it]  0%|          | 7/1755 [04:56<20:34:02, 42.36s/it]  0%|          | 8/1755 [05:39<20:35:24, 42.43s/it]  1%|          | 9/1755 [06:22<20:35:28, 42.46s/it]  1%|          | 10/1755 [07:03<20:25:19, 42.13s/it]  1%|          | 11/1755 [07:45<20:23:34, 42.10s/it]  1%|          | 12/1755 [08:27<20:25:43, 42.19s/it]  1%|          | 13/1755 [09:09<20:24:09, 42.16s/it]  1%|          | 14/1755 [09:52<20:22:50, 42.14s/it]  1%|          | 15/1755 [10:33<20:20:26, 42.08s/it]  1%|          | 16/1755 [11:16<20:21:38, 42.15s/it]  1%|          | 17/1755 [11:58<20:19:35, 42.10s/it]  1%|          | 18/1755 [12:40<20:17:51, 42.07s/it]  1%|          | 19/1755 [13:22<20:16:25, 42.04s/it]  1%|          | 20/1755 [14:04<20:13:50, 41.98s/it]  1%|          | 21/1755 [14:45<20:10:39, 41.89s/it]  1%|▏         | 22/1755 [15:29<20:27:03, 42.48s/it]  1%|▏         | 23/1755 [16:11<20:18:13, 42.20s/it]  1%|▏         | 24/1755 [16:53<20:14:23, 42.09s/it]  1%|▏         | 25/1755 [17:35<20:13:02, 42.07s/it]  1%|▏         | 26/1755 [18:17<20:12:14, 42.07s/it]  1%|▏         | 26/1755 [18:59<21:02:45, 43.82s/it]
+loss:  2.9395407977894767
+length:  0.532996416091919
+loss total:  21.16674631372534
+training accuracy:  tensor(0.0407, device='cuda:0')
+macro training f1:  tensor(0.0204, device='cuda:0')
+micro training f1:  tensor(0.0407, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  42.839083433151245
+loss total:  29.514972358143257
+training accuracy:  tensor(0.4795, device='cuda:0')
+macro training f1:  tensor(0.0903, device='cuda:0')
+micro training f1:  tensor(0.4795, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  85.5370512008667
+loss total:  40.20265581978954
+training accuracy:  tensor(0.6025, device='cuda:0')
+macro training f1:  tensor(0.1001, device='cuda:0')
+micro training f1:  tensor(0.6025, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  127.61707949638367
+loss total:  47.361891443852706
+training accuracy:  tensor(0.6720, device='cuda:0')
+macro training f1:  tensor(0.1042, device='cuda:0')
+micro training f1:  tensor(0.6720, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  170.03076839447021
+loss total:  52.64752595175389
+training accuracy:  tensor(0.7089, device='cuda:0')
+macro training f1:  tensor(0.1057, device='cuda:0')
+micro training f1:  tensor(0.7089, device='cuda:0')
+Accuracy on validation set:  tensor(0.0013, device='cuda:0')
+macro F1 on validation set:  tensor(0.0013, device='cuda:0')
+micro f1 validation set:  tensor(0.0013, device='cuda:0')
+tensor(0.0013, device='cuda:0')
+length:  212.27219462394714
+loss total:  59.25006902798177
+training accuracy:  tensor(0.7338, device='cuda:0')
+macro training f1:  tensor(0.1073, device='cuda:0')
+micro training f1:  tensor(0.7338, device='cuda:0')
+Accuracy on validation set:  tensor(0.0010, device='cuda:0')
+macro F1 on validation set:  tensor(0.0011, device='cuda:0')
+micro f1 validation set:  tensor(0.0010, device='cuda:0')
+tensor(0.0002, device='cuda:0')
+length:  254.65502619743347
+loss total:  66.62600458123241
+training accuracy:  tensor(0.7475, device='cuda:0')
+macro training f1:  tensor(0.1082, device='cuda:0')
+micro training f1:  tensor(0.7475, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0.0011, device='cuda:0')
+length:  296.9958140850067
+loss total:  78.58699566799436
+training accuracy:  tensor(0.7486, device='cuda:0')
+macro training f1:  tensor(0.1077, device='cuda:0')
+micro training f1:  tensor(0.7486, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  339.5731966495514
+loss total:  81.4673026776621
+training accuracy:  tensor(0.7575, device='cuda:0')
+macro training f1:  tensor(0.1081, device='cuda:0')
+micro training f1:  tensor(0.7575, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  382.0954661369324
+loss total:  89.75130499566434
+training accuracy:  tensor(0.7600, device='cuda:0')
+macro training f1:  tensor(0.1082, device='cuda:0')
+micro training f1:  tensor(0.7600, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  423.4978015422821
+loss total:  94.49195185638162
+training accuracy:  tensor(0.7658, device='cuda:0')
+macro training f1:  tensor(0.1084, device='cuda:0')
+micro training f1:  tensor(0.7658, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  465.50928354263306
+loss total:  109.05753782129094
+training accuracy:  tensor(0.7635, device='cuda:0')
+macro training f1:  tensor(0.1079, device='cuda:0')
+micro training f1:  tensor(0.7635, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  507.9334502220154
+loss total:  115.07828784608124
+training accuracy:  tensor(0.7731, device='cuda:0')
+macro training f1:  tensor(0.1079, device='cuda:0')
+micro training f1:  tensor(0.7731, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  550.0277414321899
+loss total:  120.8702512210991
+training accuracy:  tensor(0.7777, device='cuda:0')
+macro training f1:  tensor(0.1076, device='cuda:0')
+micro training f1:  tensor(0.7777, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  592.1192228794098
+loss total:  125.0623885707788
+training accuracy:  tensor(0.7855, device='cuda:0')
+macro training f1:  tensor(0.1078, device='cuda:0')
+micro training f1:  tensor(0.7855, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  634.0784373283386
+loss total:  133.56384437210895
+training accuracy:  tensor(0.7903, device='cuda:0')
+macro training f1:  tensor(0.1077, device='cuda:0')
+micro training f1:  tensor(0.7903, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  676.3739533424377
+loss total:  146.7160578318993
+training accuracy:  tensor(0.7871, device='cuda:0')
+macro training f1:  tensor(0.1070, device='cuda:0')
+micro training f1:  tensor(0.7871, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  718.3691129684448
+loss total:  155.17916644724215
+training accuracy:  tensor(0.7845, device='cuda:0')
+macro training f1:  tensor(0.1067, device='cuda:0')
+micro training f1:  tensor(0.7845, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  760.3505511283875
+loss total:  160.80118063890984
+training accuracy:  tensor(0.7903, device='cuda:0')
+macro training f1:  tensor(0.1070, device='cuda:0')
+micro training f1:  tensor(0.7903, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  802.3344042301178
+loss total:  168.88683516744703
+training accuracy:  tensor(0.7886, device='cuda:0')
+macro training f1:  tensor(0.1061, device='cuda:0')
+micro training f1:  tensor(0.7886, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  844.1609921455383
+loss total:  180.07577920250858
+training accuracy:  tensor(0.7864, device='cuda:0')
+macro training f1:  tensor(0.1053, device='cuda:0')
+micro training f1:  tensor(0.7864, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  885.850727558136
+loss total:  185.7450848026865
+training accuracy:  tensor(0.7892, device='cuda:0')
+macro training f1:  tensor(0.1054, device='cuda:0')
+micro training f1:  tensor(0.7892, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  929.7146461009979
+loss total:  191.0584342018168
+training accuracy:  tensor(0.7920, device='cuda:0')
+macro training f1:  tensor(0.1055, device='cuda:0')
+micro training f1:  tensor(0.7920, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  971.2593438625336
+loss total:  197.749986373548
+training accuracy:  tensor(0.7918, device='cuda:0')
+macro training f1:  tensor(0.1051, device='cuda:0')
+micro training f1:  tensor(0.7918, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  1013.1033232212067
+loss total:  202.99162994148213
+training accuracy:  tensor(0.7948, device='cuda:0')
+macro training f1:  tensor(0.1051, device='cuda:0')
+micro training f1:  tensor(0.7948, device='cuda:0')
+Accuracy on validation set:  tensor(0., device='cuda:0')
+macro F1 on validation set:  tensor(0., device='cuda:0')
+micro f1 validation set:  tensor(0., device='cuda:0')
+tensor(0., device='cuda:0')
+length:  1055.1087172031403
+loss total:  213.11088670196725
+training accuracy:  tensor(0.7946, device='cuda:0')
+macro training f1:  tensor(0.1050, device='cuda:0')
+micro training f1:  tensor(0.7946, device='cuda:0')
+Accuracy on validation set:  tensor(0.0028, device='cuda:0')
+macro F1 on validation set:  tensor(0.0029, device='cuda:0')
+micro f1 validation set:  tensor(0.0028, device='cuda:0')
+tensor(0.0029, device='cuda:0')
+length:  1097.1760833263397
+loss total:  226.65367149497868
+training accuracy:  tensor(0.7954, device='cuda:0')
+macro training f1:  tensor(0.1049, device='cuda:0')
+micro training f1:  tensor(0.7954, device='cuda:0')
+Accuracy on validation set:  tensor(0.0019, device='cuda:0')
+macro F1 on validation set:  tensor(0.0019, device='cuda:0')
+micro f1 validation set:  tensor(0.0019, device='cuda:0')
+tensor(0.0009, device='cuda:0')
+Stopped at epoch 0
+  0%|          | 0/1755 [00:00<?, ?it/s]  0%|          | 1/1755 [00:42<20:34:43, 42.24s/it]  0%|          | 2/1755 [01:24<20:33:46, 42.23s/it]  0%|          | 3/1755 [02:06<20:30:57, 42.16s/it]  0%|          | 4/1755 [02:48<20:33:16, 42.26s/it]  0%|          | 5/1755 [03:31<20:32:09, 42.25s/it]  0%|          | 6/1755 [04:13<20:30:16, 42.20s/it]  0%|          | 7/1755 [04:55<20:27:31, 42.13s/it]  0%|          | 8/1755 [05:37<20:25:17, 42.08s/it]  1%|          | 9/1755 [06:19<20:24:38, 42.08s/it]  1%|          | 10/1755 [07:00<20:14:26, 41.76s/it]  1%|          | 11/1755 [07:42<20:14:03, 41.77s/it]  1%|          | 12/1755 [08:24<20:17:22, 41.91s/it]  1%|          | 13/1755 [09:06<20:18:23, 41.97s/it]  1%|          | 14/1755 [09:48<20:18:15, 41.98s/it]  1%|          | 15/1755 [10:30<20:16:18, 41.94s/it]  1%|          | 16/1755 [11:12<20:15:46, 41.95s/it]  1%|          | 17/1755 [11:54<20:15:16, 41.95s/it]  1%|          | 18/1755 [12:36<20:16:14, 42.01s/it]  1%|          | 19/1755 [13:18<20:16:05, 42.03s/it]  1%|          | 20/1755 [14:00<20:16:22, 42.06s/it]  1%|          | 21/1755 [14:42<20:15:21, 42.05s/it]  1%|▏         | 22/1755 [15:24<20:15:41, 42.09s/it]  1%|▏         | 23/1755 [16:06<20:10:12, 41.92s/it]  1%|▏         | 24/1755 [16:47<20:03:07, 41.70s/it]  1%|▏         | 25/1755 [17:29<20:05:35, 41.81s/it]  1%|▏         | 26/1755 [18:11<20:08:24, 41.93s/it]  2%|▏         | 27/1755 [18:53<20:08:16, 41.95s/it]  2%|▏         | 28/1755 [19:36<20:10:19, 42.05s/it]slurmstepd: error: *** JOB 39404033 ON c2189 CANCELLED AT 2023-11-08T01:13:05 ***

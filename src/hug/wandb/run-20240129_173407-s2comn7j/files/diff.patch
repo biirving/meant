@@ -1,0 +1,343 @@
+diff --git a/src/hug/checkpoint_train.py b/src/hug/checkpoint_train.py
+index 0c7652c..c1e1316 100644
+--- a/src/hug/checkpoint_train.py
++++ b/src/hug/checkpoint_train.py
+@@ -141,8 +141,8 @@ class ner_trainer():
+                     label_ids.append(-100)
+                 previous_word_idx = word_idx
+             labels.append(label_ids)
+-        tokenized_inputs['ner_ids'] = labels
+-        return tokenized_inputs 
++        #tokenized_inputs['ner_ids'] = labels
++        return tokenized_inputs, labels 
+ 
+ 
+     def f1_plot(self, scores):
+@@ -188,12 +188,13 @@ class ner_trainer():
+         for train_index in tqdm(range(0, len(self.X_train) - self.train_batch_size * self.join_size, self.train_batch_size * self.join_size)):
+ #                to_tokenize = self.join_examples(self.train_data[train_index:train_index+(self.train_batch_size * self.join_size)])
+             to_tokenize = self.train_data[train_index:train_index + self.train_batch_size]
+-            x_final_input = self.tokenize_and_align_labels(to_tokenize)
+-            out = model.forward(x_final_input['input_ids'].to(device))
++            x_final_input, labels = self.tokenize_and_align_labels(to_tokenize)
++            x_final_input = x_final_input.to(device)
++            out = model.forward(**x_final_input)
+             x_final_input['input_ids'].cpu()
+             batch_loss = []
+             for i, vec in enumerate(out['logits']):
+-                target = torch.tensor(x_final_input['ner_ids'][i]).to(device)
++                target = torch.tensor(labels[i]).to(device)
+                 loss = loss_fct(vec.to(device), target)
+                 batch_loss.append(loss)
+                 training_loss.append(loss.item()) 
+@@ -219,16 +220,15 @@ class ner_trainer():
+             self.optimizer.step()
+             if(train_index % 10000 == 0):
+                 print('loss: ',  loss.item())
+-            print('Epoch length: ', str(time.time() - t0))
+-            #self.plot(np.array(training_loss), self.model_name, self.epoch)
+-            print('epoch: ', counter)
+-            counter += 1
+-            print('loss total: ', sum(training_loss))
+-            print('training accuracy: ', train_accuracy.compute())
+-            print(f1_type + ' training f1: ', train_f1.compute())
+-            print('micro training f1: ', train_f1_micro.compute())
+-            #self.f1_plot(np.array(train_f1_scores))
+-            self.lr_scheduler.step()
++        print('length: ', str(time.time() - t0))
++        #self.plot(np.array(training_loss), self.model_name, self.epoch)
++        counter += 1
++        print('loss total: ', sum(training_loss))
++        print('training accuracy: ', train_accuracy.compute())
++        print(f1_type + ' training f1: ', train_f1.compute())
++        print('micro training f1: ', train_f1_micro.compute())
++        #self.f1_plot(np.array(train_f1_scores))
++        self.lr_scheduler.step()
+         torch.save(self.model, self.file_path + '/models/' + self.model_name + '/' + self.model_name + '_' + self.run_id + '_' + str(self.epoch + 1) + '.pt')
+         torch.save(self.optimizer.state_dict(), self.file_path + '/optimizers/' +  self.optimizer_name + '/' + self.model_name + '_' + self.run_id + '_' + str(args.learning_rate) + '_' + str(self.epoch + 1) + '.pt')
+         torch.save(self.lr_scheduler.state_dict(), self.file_path + '/lr_schedulers/' + self.lrst + '/' + self.model_name + '_' +  self.run_id + '_' + str(self.epoch + 1) + '.pt')
+@@ -239,14 +239,14 @@ class ner_trainer():
+         self.model.eval()
+         with torch.no_grad():
+             for val_index in tqdm(range(0, len(self.val_data) - self.eval_batch_size, self.eval_batch_size)):
+-                val_input = self.tokenize_and_align_labels(self.val_data[val_index:val_index+self.eval_batch_size])                 
+-		
+-                out = self.model(val_input['input_ids'].to(device))
++                val_input, val_labels = self.tokenize_and_align_labels(self.val_data[val_index:val_index+self.eval_batch_size])                 
++                val_input = val_input.to(device)
++                out = self.model(**val_input)
+                 for i, vec in enumerate(out['logits']):
+-                    target = torch.tensor(val_input['ner_ids'][i]).to(device)
++                    target = torch.tensor(val_labels[i]).to(device)
+                     # metric computation, we are going to do a hard metric
+                     # (it should be able to identify the non zero ner tags)
+-                    mask = (target != -100) & (target != 0)
++                    mask = (target != -100) 
+                     indices = torch.nonzero(mask)
+                     metric_pred = torch.transpose(vec[indices], 1, 2).squeeze(dim=2)
+                     if(metric_pred.shape[0] == 0):
+@@ -257,12 +257,14 @@ class ner_trainer():
+                     f1_micro.update(metric_pred, metric_target)
+                     f1_score = f1.compute()
+         val_f1 = f1.compute()
+-        torch.save(torch.tensor(val_f1), self.file_path '/output_files/' + self.dataset + '/early_stop/early_stop' + str(self.epoch + 1) + '.pt')
++        torch.save(torch.tensor(val_f1), self.file_path + '/output_files/' + self.dataset + '/early_stop/early_stop_' + 
++                str(self.epoch + 1) + '_' + str(self.run_id) + '.pt')
+         print("Accuracy on validation set: ", accuracy.compute())
+         # save these accuracy and f1 scores
+         print(f1_type + " F1 on validation set: ", f1.compute())
+         if(self.epoch > 0):
+-            prev_f1 = torch.load(self.file_path '/output_files/' + self.dataset + '/early_stop/early_stop' + str(self.epoch) + '.pt').item()
++            prev_f1 = torch.load(self.file_path + '/output_files/' + self.dataset + '/early_stop/early_stop_' + 
++                    str(self.epoch) + '_' + str(self.run_id) + '.pt').item()
+             # checking for minimal change in the macro f1 value
+             if(abs(val_f1 - prev_f1) < self.stoppage):
+                 print('Cancellation')
+@@ -305,15 +307,14 @@ if __name__=='__main__':
+     parser.add_argument('-hft', '--hugging_face_tokenizer', type=str, help='HuggingFace tokenizer', default=None)
+     parser.add_argument('-fp', '--file_path', type=str, help='Path to files',required=True)
+     parser.add_argument('-mn', '--model_name', type=str, help='Model name', required=True)
+-    # this feels overly complex
+-    parser.add_argument('-pvo','--previous_output_file', type=str, help='previous output file', required=True)
++    parser.add_argument('-pvo','--prev_output_file', type=str, help='previous output file', required=True)
+     args = parser.parse_args()
+ 
+     t0 = time.time()
+     if(args.epoch > 0):
+     # Define the word you want to search for
+         search_word = "Cancellation"
+-        file_path = args.previous_output_file  
++        file_path = args.prev_output_file  
+         with open(file_path, 'r') as file:
+             file_content = file.read()
+         if search_word in file_content:
+@@ -398,6 +399,7 @@ if __name__=='__main__':
+  
+     params = {
+             'train': train,
++            'stoppage':args.stoppage,
+             'lr': args.learning_rate,
+             'run_id':args.run_id,
+             'file_path': args.file_path,
+diff --git a/src/hug/configs/bert_ner.json b/src/hug/configs/bert_ner.json
+index d818065..22dc482 100644
+--- a/src/hug/configs/bert_ner.json
++++ b/src/hug/configs/bert_ner.json
+@@ -1,42 +1,43 @@
+ {
+-"_num_labels": 9,
+-"architectures": [
+-"BertForTokenClassification"
+-],
+-"attention_probs_dropout_prob": 0.1,
+-"hidden_act": "gelu",
+-"hidden_dropout_prob": 0.1,
+-"hidden_size": 768,
+-"id2label": {
+-"0": "O",
+-"1": "B-MISC",
+-"2": "I-MISC",
+-"3": "B-PER",
+-"4": "I-PER",
+-"5": "B-ORG",
+-"6": "I-ORG",
+-"7": "B-LOC",
+-"8": "I-LOC"
+-},
+-"initializer_range": 0.02,
+-"intermediate_size": 3072,
+-"label2id": {
+-"B-MISC": 1,
+-"B-ORG": 5,
+-"B-PER": 3,
+-"I-LOC": 8,
+-"I-MISC": 2,
+-"I-ORG": 6,
+-"I-PER": 4,
+-"O": 0
+-},
+-"layer_norm_eps": 1e-12,
+-"max_position_embeddings": 512,
+-"model_type": "bert",
+-"num_attention_heads": 12,
+-"num_hidden_layers": 12,
+-"output_past": true,
+-"pad_token_id": 0,
+-"type_vocab_size": 2,
+-"vocab_size": 28996
+-}
++    "_num_labels": 9,
++    "architectures": [
++      "BertForTokenClassification"
++    ],
++    "attention_probs_dropout_prob": 0.1,
++    "hidden_act": "gelu",
++    "hidden_dropout_prob": 0.1,
++    "hidden_size": 768,
++    "id2label": {
++      "0": "O",
++      "1": "B-MISC",
++      "2": "I-MISC",
++      "3": "B-PER",
++      "4": "I-PER",
++      "5": "B-ORG",
++      "6": "I-ORG",
++      "7": "B-LOC",
++      "8": "I-LOC"
++    },
++    "initializer_range": 0.02,
++    "intermediate_size": 3072,
++    "label2id": {
++      "B-LOC": 7,
++      "B-MISC": 1,
++      "B-ORG": 5,
++      "B-PER": 3,
++      "I-LOC": 8,
++      "I-MISC": 2,
++      "I-ORG": 6,
++      "I-PER": 4,
++      "O": 0
++    },
++    "layer_norm_eps": 1e-12,
++    "max_position_embeddings": 512,
++    "model_type": "bert",
++    "num_attention_heads": 12,
++    "num_hidden_layers": 12,
++    "output_past": true,
++    "pad_token_id": 0,
++    "type_vocab_size": 2,
++    "vocab_size": 28996
++}
+\ No newline at end of file
+diff --git a/src/hug/e.py b/src/hug/e.py
+index d5bd413..a7c60ba 100644
+--- a/src/hug/e.py
++++ b/src/hug/e.py
+@@ -1,14 +1,77 @@
+ import torch
++from torch import nn, tensor
+ from datasets import load_dataset
++from transformers import AutoTokenizer, AutoModelForTokenClassification, AutoConfig
++from allennlp_light.modules import ConditionalRandomField
++from allennlp_light.modules.conditional_random_field.conditional_random_field import allowed_transitions
+ 
++data = load_dataset('tner/tweetner7')
++train = data['train_2021']
++input = train[0:1]
+ 
+-
+-#wow = load_dataset('adsabs/WIESP2022-NER')
+-#print(wow)
++tokenizer = AutoTokenizer.from_pretrained('roberta-large', add_prefix_space=True)
++model = AutoModelForTokenClassification.from_pretrained('tner/roberta-large-tweetner7-all')
++print(model)
++"""
++def tokenize_and_align_labels(examples):
++    list_len = [len(i) for i in examples['tokens']]
++    max_length = max(list_len)
++    if(len(list_len) == 1):
++        if(max_length <= 2):
++            tokenized_inputs = tokenizer(examples['tokens'], padding='max_length', max_length=128, is_split_into_words=True, return_tensors='pt')
++        else:
++            tokenized_inputs = tokenizer(examples['tokens'], padding='max_length', max_length=128, truncation=True,is_split_into_words=True, return_tensors='pt')
++    else:
++        tokenized_inputs = tokenizer(examples['tokens'], padding='max_length', max_length=128, truncation=True, is_split_into_words=True, return_tensors='pt')
++    labels = []
++    accuracy_labels = []
++    for i, label in enumerate(examples['tags']):
++        word_ids = tokenized_inputs.word_ids(batch_index=i)  # Map tokens to their respective word.
++        previous_word_idx = None
++        label_ids = []
++        accuracy_ids = []
++        for word_idx in word_ids:  # Set the special tokens to -100.
++            if word_idx is None:
++                label_ids.append(-100)
++            elif word_idx != previous_word_idx: 
++                label_ids.append(label[word_idx])
++            else:
++                label_ids.append(-100)
++            previous_word_idx = word_idx
++        labels.append(label_ids)
++    return tokenized_inputs, labels 
+ 
+ 
++x_inputs, labels = tokenize_and_align_labels(input)
++model = AutoModelForTokenClassification.from_pretrained('roberta-large')
++model.classifier = nn.Linear(1024, 15)
++out = model(**x_inputs)
++id2label = {
++    "B-corporation": 0,
++    "B-creative_work": 1,
++    "B-event": 2,
++    "B-group": 3,
++    "B-location": 4,
++    "B-person": 5,
++    "B-product": 6,
++    "I-corporation": 7,
++    "I-creative_work": 8,
++    "I-event": 9,
++    "I-group": 10,
++    "I-location": 11,
++    "I-person": 12,
++    "I-product": 13,
++    "O": 14
++}
++id2label = {v: k for k, v in id2label.items()}
++crf_layer = ConditionalRandomField(
++                num_tags=15,
++                constraints=allowed_transitions(constraint_type="BIO", labels=id2label)
++            )
++crf_out = crf_layer(out['logits'], torch.tensor(labels), x_inputs['attention_mask'])
+ #for x in range(100):
+  #  if(63 in wow['train'][x]['ner_ids']):
+   #    print(63 in wow['train'][x]['ner_ids'])
+ 
+ 
++"""
+\ No newline at end of file
+diff --git a/src/hug/test.py b/src/hug/test.py
+index 8f9952e..41e3c6e 100644
+--- a/src/hug/test.py
++++ b/src/hug/test.py
+@@ -92,8 +92,8 @@ class test():
+                 for i, vec in enumerate(out['logits']):
+                     target = torch.tensor(x_final_input['ner_tags'][i]).to(device)
+                     # metric computation
+-                    #mask = (target != -100) 
+-                    mask = (target != 0) & (target != -100)
++                    mask = (target != -100) 
++                    #mask = (target != 0) & (target != -100)
+                     indices = torch.nonzero(mask)
+                     metric_pred = torch.transpose(vec[indices], 1, 2).squeeze(dim=2)
+                     if(metric_pred.shape[0] == 0):
+@@ -128,7 +128,7 @@ if __name__=='__main__':
+     parser.add_argument('-hft', '--hugging_face_tokenizer', type=str, help='Hugging face tokenizer', required=True)
+     parser.add_argument('-rid', '--run_id', type=str, help='Run identification number', required=True)
+     parser.add_argument('-b', '--test_batch_size', type=int, help='Test batch size', default=8)
+-    parser.add_argument('pvo', '--prev_output_file', type=str, help='Previous output file', required=True)
++    parser.add_argument('-pvo', '--prev_output_file', type=str, help='Previous output file', required=True)
+     args = parser.parse_args()
+ 
+     if(args.hugging_face_data is not None):
+@@ -141,10 +141,11 @@ if __name__=='__main__':
+     tokenizer = AutoTokenizer.from_pretrained(args.hugging_face_tokenizer)
+     epoch = args.epoch
+     # we need to get the right epoch for the job
+-    if(args.epoch > 0):
++    #if(args.epoch > 0):
++    if(False):
+     # Define the word you want to search for
+         search_word = "Cancellation"
+-        file_path = args.previous_output_file  
++        file_path = args.prev_output_file  
+         with open(file_path, 'r') as file:
+             file_content = file.read()
+         if search_word in file_content:
+@@ -156,6 +157,7 @@ if __name__=='__main__':
+             # Convert the extracted string to an integer
+             epoch = int(epoch_number_str)
+     model = torch.load(args.file_path + '/models/' + args.model_name + '/' + args.model_name + '_' + args.run_id + '_' + str(epoch + 1) + '.pt')
++    print(model.classifier)
+     #model = AutoModelForTokenClassification.from_pretrained('dslim/bert-base-ner')
+     #model = torch.compile(model).to(device)
+     #model_jit = torch.jit.trace({"model":model, example_inputs:})

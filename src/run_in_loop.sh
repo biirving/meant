@@ -1,8 +1,8 @@
 #!/bin/bash
 
 jobtime='08:00:00'
-output_filepath='/work/nlp/b.irving/meant_runs/output_files/'
-filepath='/work/nlp/b.irving/meant_runs/'
+output_filepath='..'
+filepath='..'
 model_id_number=$(shuf -i 100000-999999 -n 1)
 model_id="$model_id_number"
 num_encoders=1

@@ -15,16 +15,6 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm 
 
-# I don't h
-#sys.path.append('/work/nlp/b.irving/MultiBench/datasets/affect')
-#from get_data import get_dataloader  # noqa
-
-#traindata, validdata, testdata = get_dataloader(
-#   '/scratch/irving.b/mosi_raw.pkl', robust_test=False, max_pad=True, data_type='mosi', max_seq_len=50)
-
-#for batch in traindata:
-#    print(batch)
-#    sys.exit()
 
 def drop_entry(dataset):
     """Drop entries where there's no text in the data."""
@@ -46,7 +36,7 @@ def drop_entry(dataset):
     return dataset
 
 # Like with most things, you have to do it yourself
-filepath='/scratch/irving.b/Processed/aligned_50.pkl'
+filepath='../aligned_50.pkl'
 with open(filepath, "rb") as f:
     alldata = pickle.load(f)
 
@@ -65,7 +55,7 @@ print(alldata['train']['text_bert'][1].shape)
 
 print(alldata['train'].keys())
 
-labels = pd.read_csv('/scratch/irving.b/label.csv')
+labels = pd.read_csv('../label.csv')
 
 print(len([label for label in alldata['train']['classification_labels'] if label > 0]))
 

@@ -58,8 +58,8 @@ from torch.utils.tensorboard import SummaryWriter
 import wandb
 import pandas as pd
 
-sys.path.append('/work/nlp/b.irving/michinaga/teanet/models')
-sys.path.append('/work/nlp/b.irving/michinaga/teanet/utils/')
+sys.path.append('../michinaga/teanet/models')
+sys.path.append('../michinaga/teanet/utils/')
 from teanet import teanet
 
 import torch
@@ -325,7 +325,7 @@ class meant_trainer():
                     all_true_labels.extend(true_labels)
                     all_predicted_labels.extend(predicted_labels)
                 # Save the confusion matrix after the loop
-                save_path = '/work/nlp/b.irving/meant/confusion_matrices/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + str(self.run_id) + '_' + str(final_epoch + 1) + '.png'
+                save_path = '../../meant/confusion_matrices/' + self.model_name + '_' + str(self.num_encoders) + '_' +  self.dataset + '_' + str(self.run_id) + '_' + str(final_epoch + 1) + '.png'
                 class_names = ['Sell Signal (0)', 'Buy signal (1)']
                 save_confusion_matrix(all_true_labels, all_predicted_labels, class_names, save_path)
             test_metrics.show()  
@@ -419,7 +419,7 @@ if __name__=='__main__':
                     # using pretrained VisualBERT
                     # rerun these experiments
                     # fuck it lets move on
-                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                    config = AutoConfig.from_pretrained('configs/' + args.model_name +'.json', local_files_only=True)
                     vl_bert_model = VisualBertModel.from_pretrained("uclanlp/visualbert-vqa-coco-pre")
                     tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-uncased")
                     #vl_bert_model.embeddings.word_embeddings = bertweet.embeddings.word_embeddings
@@ -429,11 +429,11 @@ if __name__=='__main__':
                     use_prices = False
                     collate_fn = lag_text_image_collator
                 elif args.model_name == 'vilt':
-                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/vilt.json', local_files_only=True)
+                    config = AutoConfig.from_pretrained('configs/vilt.json', local_files_only=True)
                     #vilt = ViltModel._from_config(config)
                     # using pretrained ViLT
                     # rerun these experiments
-                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                    config = AutoConfig.from_pretrained('configs/' + args.model_name +'.json', local_files_only=True)
                     vilt = ViltModel.from_pretrained("dandelin/vilt-b32-mlm")
                     tokenizer = ViltProcessor.from_pretrained("dandelin/vilt-b32-mlm", do_rescale=False)
                     model = ViltWrapper(vilt, 768, 2).to(device) 
@@ -442,7 +442,7 @@ if __name__=='__main__':
                     use_prices = False
                     collate_fn = lag_text_image_collator
                 elif args.model_name == 'bertweet':
-                    config = AutoConfig.from_pretrained('/work/nlp/b.irving/nlp/src/hug/configs/' + args.model_name +'.json', local_files_only=True)
+                    config = AutoConfig.from_pretrained('configs/' + args.model_name +'.json', local_files_only=True)
                     model = bertweet_wrapper(bertweet, 768, 2).to(device)
                     tokenizer = AutoTokenizer.from_pretrained('vinai/bertweet-base')
                     use_images = False
@@ -502,14 +502,14 @@ if __name__=='__main__':
                 print('pretrained')
                 if args.num_encoders == 12:
                     print('Meant large')
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('..').to(device)
                 elif args.num_encoders == 24:
                     print('Meant x large')
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('..').to(device)
                 elif args.num_encoders == 1:
                     print('Meant base')
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
-                pretrained_vision = torch.load('/work/nlp/b.irving/meant_runs/models/meant_vision_encoder/meant_vision_encoder_Tempstock_0.pt').to(device)
+                    language_encoders = torch.load('..').to(device)
+                pretrained_vision = torch.load('..').to(device)
                 model.languageEncoders = language_encoders.languageEncoders
                 model.visionEncoders = pretrained_vision.visionEncoders
                 del pretrained_vision
@@ -574,11 +574,11 @@ if __name__=='__main__':
             use_lag = True
             collate_fn = lag_text_collator
             if args.num_encoders == 12:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+                language_encoders = torch.load('..').to(device)
             elif args.num_encoders == 24:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+                language_encoders = torch.load('..').to(device)
             elif args.num_encoders == 1:
-                language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
+                language_encoders = torch.load('..').to(device)
             model.languageEncoders = language_encoders.languageEncoders
             del language_encoders 
             gc.collect()
@@ -621,11 +621,11 @@ if __name__=='__main__':
             tokenizer = AutoTokenizer.from_pretrained('vinai/bertweet-base')
             if args.pretrained:
                 if args.num_encoders == 12:
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('..').to(device)
                 elif args.num_encoders == 24:
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('..').to(device)
                 elif args.num_encoders == 1:
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('..').to(device)
                 model.languageEncoders = language_encoders.languageEncoders
         elif args.model_name == 'meant_price':
             model = meant_price(
@@ -696,13 +696,13 @@ if __name__=='__main__':
                 print('pretrained')
                 if args.num_encoders == 12:
                     print('Meant large')
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_12_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('')
                 elif args.num_encoders == 24:
                     print('Meant x large')
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_24_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('')
                 elif args.num_encoders == 1:
                     print('Meant base')
-                    language_encoders = torch.load('/work/nlp/b.irving/meant_runs/models/meant_language_encoder/meant_language_encoder_1_tempstock_0_1.pt').to(device)
+                    language_encoders = torch.load('')
                 model.languageEncoders = language_encoders.languageEncoders
                 del language_encoders
                 gc.collect()
@@ -789,18 +789,18 @@ if __name__=='__main__':
     if args.dataset == 'TempstockSmall':
         assert not (args.image_only == True and args.language_only == True), 'Cannot be an image only AND a language only task'
         if args.image_only:
-            graphs = np.memmap('/work/nlp/b.irving/stock/complete/graphs_5.npy', dtype=np_dtype, mode='r')
+            graphs = np.memmap('..', dtype=np_dtype, mode='r')
             tweets = np.ones(graphs.shape[0], 1).astype(np.float32)
         elif args.language_only:
-            tweets = np.load('/work/nlp/b.irving/stock/complete/tweets_5.npy', dtype=np_dtype, mode='r')
-            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
+            tweets = np.load('..', dtype=np_dtype, mode='r')
+            attention_masks = np.load('..')
             graphs = np.ones(tweets.shape[0], 1).astype(np.float32)
         else:
-            graphs = np.load('/work/nlp/b.irving/stock/complete/graphs_5.npy')
-            tweets = np.load('/work/nlp/b.irving/stock/complete/all_original_tweets_resampled_5.npy')
-            attention_masks = np.load('/work/nlp/b.irving/stock/complete/attention_masks.npy')
-            macds = np.load('/work/nlp/b.irving/stock/complete/macds_5.npy')
-            labels = np.load('/work/nlp/b.irving/stock/complete/y_resampled_5.npy')
+            graphs = np.load('..')
+            tweets = np.load('..')
+            attention_masks = np.load('..')
+            macds = np.load('..')
+            labels = np.load('..')
         if args.normalize:
             print('Normalizing data...')
             # our memmap arrays are read-only
@@ -852,9 +852,9 @@ if __name__=='__main__':
         del graphs_train, tweets_train, macds_train, graphs_val, tweets_val, macds_val, graphs_test, tweets_test, macds_test
         gc.collect()
     elif args.dataset == 'Stocknet':
-        train_loader ='/work/nlp/b.irving/stock/stocknet_train_2.csv' 
-        val_loader = '/work/nlp/b.irving/stock/stocknet_val_2.csv' 
-        test_loader = '/work/nlp/b.irving/stock/stocknet_test_2.csv'
+        train_loader =''
+        val_loader = ''
+        test_loader = ''
         dataset_class = stocknet_dataset
     elif args.dataset == 'djiaNews':
         # why doesn't this work either? Worrying...
@@ -868,35 +868,35 @@ if __name__=='__main__':
         #train_df.to_csv('djia_news_train.csv', index=False)
         #val_df.to_csv('djia_news_val.csv', index=False)
         #test_df.to_csv('djia_news_test.csv', index=False)
-        train_loader = '/work/nlp/b.irving/meant/src/djia_news_train.csv' 
-        val_loader = '/work/nlp/b.irving/meant/src/djia_news_val.csv' 
-        test_loader = '/work/nlp/b.irving/meant/src/djia_news_test.csv' 
+        train_loader = ''
+        val_loader = ''
+        test_loader = ''
         dataset_class = djia_lag_dataset
 
     elif args.dataset == 'TempStockLarge':
         if not use_tweets and not use_prices and not use_images:
             raise ValueError('Not passing any data forward. Please use the tweets, graphs, or prices.')
         if use_tweets or use_prices:
-            train_data ='/scratch/irving.b/stock/train_text.csv' 
-            val_data = '/scratch/irving.b/stock/val_text.csv' 
-            test_data = '/scratch/irving.b/stock/test_text.csv'
+            train_data =''
+            val_data = ''
+            test_data = ''
         else:
             train_data = None
             val_data = None
             test_data = None
 
         if use_images:
-            train_graphs ='/scratch/irving.b/stock/train_graphs.npy'
-            val_graphs = '/scratch/irving.b/stock/val_graphs.npy' 
-            test_graphs = '/scratch/irving.b/stock/test_graphs.npy'
+            train_graphs =''
+            val_graphs = ''
+            test_graphs = ''
         else:
             train_graphs = None
             val_graphs = None
             test_graphs = None
 
-        train_loader = {'data':train_data, 'graphs':train_graphs, 'labels':'/scratch/irving.b/stock/train_text.csv'}
-        val_loader = {'data':val_data, 'graphs':val_graphs, 'labels':'/scratch/irving.b/stock/val_text.csv'}
-        test_loader = {'data':test_data, 'graphs':test_graphs, 'labels':'/scratch/irving.b/stock/test_text.csv'}
+        train_loader = {'data':train_data, 'graphs':train_graphs, 'labels':''}
+        val_loader = {'data':val_data, 'graphs':val_graphs, 'labels':''}
+        test_loader = {'data':test_data, 'graphs':test_graphs, 'labels':''}
         dataset_class = tempstock_lag_dataset
 
     # I am not like the others
@@ -911,7 +911,7 @@ if __name__=='__main__':
             for modality in list(dataset.keys()):
                 dataset[modality] = np.delete(dataset[modality], drop, 0)
             return dataset
-        filepath='/scratch/irving.b/Processed/aligned_50.pkl'
+        filepath=''
         with open(filepath, "rb") as f:
             alldata = pickle.load(f)
         alldata['train'] = drop_entry(alldata['train'])

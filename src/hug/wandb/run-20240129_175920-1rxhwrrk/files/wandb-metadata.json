@@ -1,0 +1,27 @@
+{
+    "os": "Linux-3.10.0-1160.25.1.el7.x86_64-x86_64-with-glibc2.17",
+    "python": "3.10.10",
+    "heartbeatAt": "2024-01-29T22:59:28.669069",
+    "startedAt": "2024-01-29T22:59:20.056536",
+    "docker": null,
+    "gpu": "Tesla P100-PCIE-12GB",
+    "gpu_count": 1,
+    "cpu_count": 28,
+    "cuda": null,
+    "args": [
+        "--model_name=roberta_mlm",
+        "--track=True",
+        "--batch_size=16"
+    ],
+    "state": "running",
+    "program": "/var/spool/slurmd/job40529355/slurm_script",
+    "git": {
+        "remote": "https://github.com/biirving/nlp.git",
+        "commit": "3f808ba79bab510a0f286652597a9b4a60cf5d68"
+    },
+    "email": "biirving30@gmail.com",
+    "root": "/work/nlp/b.irving/nlp",
+    "host": "c2193",
+    "username": "irving.b",
+    "executable": "/home/irving.b/.conda/envs/dynamo/bin/python"
+}
