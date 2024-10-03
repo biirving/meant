@@ -3,7 +3,7 @@ This repository contains the code from the following paper: MEANT:Multimodal enc
 
 For the data, please contact the author: irving.b@northeastern.edu
 
-'''
+```
 @inproceedings{xu-cohen-2018-stock,
     title = "Stock Movement Prediction from Tweets and Historical Prices",
     author = "Xu, Yumo  and
