@@ -13,16 +13,10 @@ from transformers import AutoModel, AutoTokenizer
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# okay, lets run these experiments
-# because
 MAX_SEQ_LENGTH = 3333
 
-# Check if CUDA is available
 if torch.cuda.is_available():
-    # Get the name of the CUDA device
     cuda_device_name = torch.cuda.get_device_name(0)
-
-    # Check if the device name contains "Ampere" or a later architecture
     if "Ampere" in cuda_device_name or "A100" in cuda_device_name:
         ampere = True
     else:
@@ -30,8 +24,6 @@ if torch.cuda.is_available():
 else:
     print("CUDA is not available on this system.")
     ampere = False
-
-
 
 class languageEncoder(nn.Module):
     def __init__(self, dim, num_heads, dropout=0.4, flash=False):
@@ -177,16 +169,12 @@ class meantTweetPrice(nn.Module):
 
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash) for i in range(num_encoders)])
 
-        # why is this fucked up
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag) for i in range(num_temporal_encoders)])
 
-        # output head
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
 
-        # how does this work with the lag period
         self.txt_classtkn = nn.Parameter(torch.randn(1, lag, 1, text_dim))
 
-        # haven't decided on this dimensionality as of yet
         #self.temp_classtkn = nn.Parameter(torch.randn(1, image_dim))
         #self.apply(weights_init)
 

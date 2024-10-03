@@ -8,7 +8,6 @@ import torch
 A temporal attention mechanism.
 """
 
-# attend to the antecent information over time?
 class temporal(nn.Module):
 
     # the default values in the original paper for num_heads and dim are 5 and 50 respectively

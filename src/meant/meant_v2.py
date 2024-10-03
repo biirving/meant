@@ -13,11 +13,8 @@ from utils import RMSNorm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# okay, lets run these experiments
-# because
 MAX_SEQ_LENGTH = 3333
 
-# should the vision encoder encode temporal information?
 class visionEncoder(nn.Module):
     def __init__(self, dim, num_heads):
         """
@@ -157,66 +154,36 @@ class meant_v2(nn.Module):
         self.channels = channels
         self.patch_dim = self.channels * patch_res * patch_res
         self.n = int((height * width) / (patch_res ** 2))
-
-        # pretrained language embedding from hugging face model
-        # what if we have already used the flair embeddings
         self.embedding = nn.ModuleList([embedding])
         #self.embedding_alt = nn.Linear(1, 768)
-
-        # classification token for the image component. Will be passed to the temporal attention mechanism
         #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
-
-        # the patch embedding for the image
-        # we have to apply it to every image in the lag period
-        # c = channel
-        # h = height
-        # w = width
-        # b = batch
-        # f = the number of frames we are processing
         self.patchEmbed = nn.Sequential(
             Rearrange('b l c (h p1) (w p2) -> b l (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
             nn.Linear(self.patch_dim, image_dim))
-
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads) for i in range(num_encoders)])
 
-        # now the languageEncoders are an entirely separate module
-        # we can save the whole module list?
         self.languageEncoders = nn.ModuleList([
             languageEncoder(text_dim, num_heads, embeddings=embedding) if i == 0 else languageEncoder(text_dim, num_heads)
             for i in range(num_encoders)
         ])
-        # so we are printing out everything in here
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag)])
-
-        # output head
         self.mlpHead = nn.ModuleList([RMSNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
-
-        # each component has a class token
         self.img_classtkn = nn.Parameter(torch.randn(1, lag, 1, image_dim))
-
-        # how does this work with the lag period
         self.txt_classtkn = nn.Parameter(torch.randn(1, lag, 1, text_dim))
 
-        # haven't decided on this dimensionality as of yet
         #self.temp_classtkn = nn.Parameter(torch.randn(1, image_dim))
 
     def forward(self, tweets, images):
         _batch = images.shape[0]
-
-        # should this all be contained inside the language encoder?
-        # depends on pretraining scheme of choice
         words = tweets.view(_batch * self.lag, tweets.shape[2])
-        # then read our encoder input 
         for encoder in self.languageEncoders:
             words = encoder.forward(words)
         
-        # we should do the same with the vision encoder (for pretraining)
         image = self.patchEmbed(images)
 
         for encoder in self.visionEncoders:
             image = encoder.forward(image)
 
-        # I believe this is a mistake, to use attention on the class tokens
         temporal = torch.cat((torch.mean(words, dim=2), torch.mean(image, dim=2)), dim = 2)
 
         for encoder in self.temporal_encoding:

@@ -30,13 +30,9 @@ else:
     print("CUDA is not available on this system.")
     ampere = False
 
-# okay, lets run these experiments
-# because
 MAX_SEQ_LENGTH = 3333
 
-# should the vision encoder encode temporal information?
 class visionEncoder(nn.Module):
-    # we should pretrain the patch embeddings, right?
     def __init__(self, dim, num_heads, flash=False):
         """
         The initial encoder for extracting relevant features from the multimodal input.
@@ -147,7 +143,6 @@ class languageEncoder(nn.Module):
             inter = mod(inter)
         return inter + final_resid
 
-# how does this scale to deal with an arbitrary lag period
 class temporalEncoder(nn.Module):
     def __init__(self, dim, num_heads, lag, use_rot_embed=True):
         super(temporalEncoder, self).__init__()
@@ -163,7 +158,6 @@ class temporalEncoder(nn.Module):
         else:
             self.xPos = None
         # positional encoding
-
 
         #self.temp_cls_token = nn.Parameter(torch.randn)
         # Definitely matters how this is initialized

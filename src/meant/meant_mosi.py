@@ -272,45 +272,20 @@ class meant_mosi(nn.Module):
         )
 
         self.languageEncoders = nn.ModuleList([languageEncoder(self.text_dim, num_heads, flash=flash) for i in range(num_encoders)])
-
-        # we can try the dual encoder route, and then use cross attention of some kind?
-        # Should I use cross attention in my base model? For MEANT? This could help tremendously...
-
-        # I don't really want to do patch embedding though right?
-        # just some sort of cross attention, to align the
-        # text and the images
         self.visionEncoders = nn.ModuleList([visionEncoder(image_dim, num_heads, flash=flash) for i in range(num_encoders)])
         self.patchEmbed = nn.Sequential(
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
             nn.Linear(self.patch_dim, image_dim))
-
-        
-
 
         self.visinoEncoders = nn.ModuleList([])
     
         self.embedding = nn.ModuleList([embedding])
 
         self.lang_proj = nn.Sequential(nn.Linear(self.text_dim, 1), nn.LayerNorm(1), nn.GELU())
-
-        # am I just wasting my time
-        # no. This is somewhat satisfying...
-        # and I can push this across the finish line. I just need a little more juice.
-        # Should have just made a new class called MEANT TimeSFormer
-
-        # Don't know if I need this
         self.image_proj = nn.Sequential(nn.Linear(981, 1), nn.LayerNorm(1), nn.GELU())
-
-        # so we are printing out everything in here
-
-        # we are going to try some different stuff
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.text_dim, num_heads, lag, use_rot_embed=False)])
-
         self.lang_prep = nn.Sequential(nn.Linear(self.text_dim, self.text_dim), nn.LayerNorm(self.text_dim), nn.GELU(), nn.Linear(self.text_dim, 1), nn.Softmax(dim=2))
         self.lang_red = nn.Sequential(nn.Linear(self.text_dim, 5), nn.LayerNorm(5), nn.GELU())
-
-        # output head
-        # Gonna have to refactor this
         self.other_dim=1536
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.other_dim), nn.Linear(self.other_dim, num_classes), nn.Sigmoid()])
 
@@ -325,37 +300,23 @@ class meant_mosi(nn.Module):
         index = torch.LongTensor([0]).to(device=inputs.device)
         cls_emb = self.audio_emb(index)
         cls_emb = cls_emb.expand(inputs.size(0), 1, self.audio_embedding_dim)
-        print(cls_emb.shape)
-        print(inputs.shape)
         outputs = torch.cat((cls_emb, inputs), dim=1)
-
         
         cls_mask = torch.zeros(inputs.size(0), 1).to(device=inputs.device)
-        # How is the attention mask made
         masks = torch.cat((cls_mask, masks), dim=1)
         return outputs, masks
 
-    # It is not going to work just straight out of the box
-    # Maybe think for a second: Huh, what could be going wrong?
-    # Also, remove the mean pooling completely.
     def forward(self, **kwargs):
         words = kwargs.get('input_ids')
         labels = kwargs.get('labels')
         prices = kwargs.get('prices')
         images = kwargs.get('pixels')
         pixel_mask = kwargs.get('pixel_mask')
-        # How are you going to mask this
         audio = kwargs.get('audio')
         audio_attention_mask = kwargs.get('audio_mask')
-        
 
         attention_mask = kwargs.get('attention_mask')
         _batch = images.shape[0]
-
-        #words = words.view(_batch, self.lag, words.shape[2])
-
-        #if attention_mask is not None:
-        #    attention_mask = attention_mask.view(_batch, self.lag, attention_mask.shape[2])
 
         for mod in self.embedding:
             words = mod(words, attention_mask) 
@@ -365,70 +326,26 @@ class meant_mosi(nn.Module):
         
         audio = pos_enc(audio)
         audio = self.audio_encoder(audio, src_key_padding_mask=audio_attention_mask.bool())
-        
-        # so it spits out some arbitrary length sequence...
-            
-        # Interesting...
-        # So the visual data is not actually visual data
-
-        # I would have to process the videos myself? Fucking bullshit
-        # Would also take a shit ton of work
-
-        # We need a visual attention mask?
-        # Now we can align our text and image modalities?
-
-        # Should just not bother with the attention mask for now
         for encoder in self.languageEncoders:
             words = encoder.forward(words, attention_mask=attention_mask)
 
-
         #words = rearrange(words, '(b l) s d-> b l d s', b = _batch)
-        # Lets try with a TimeSFormer as well. Why not?
-
-        # We should use timesformer, but it should return in my lag form?
-
-        # Dude, one good result, and this is getting thrown in there... 
-        # Just get me above 80 chieftan
-        # Just get me above 80...
-        # Then, I will ride into the promise land
-        # Right now, we are cooking with 60
-
-
-        # I just need one good result on here and I am cooking...
-        # there are some problems obviously
-                        
         images = self.timesformer.meant_forward(images.unsqueeze(dim=2).unsqueeze(dim=3).half()) #, mask=pixel_mask)
         images = images[:, 1:, :] 
         images = rearrange(images, 'b (l s) d-> b l s d', l=self.lag)
-
-
-
 
         #act_seq_len = words.shape[3]
         #if act_seq_len < self.seq_len:
         #    padding = self.seq_len - act_seq_len 
         #    words = nn.functional.pad(words, (0, padding))
-
         # mosi mosi mosi mosi
         #words = self.lang_proj(words).squeeze(dim=2)
-
-
-        # come on baby
-        # THIS is the dataset this model was MEANT for
-        #print(words.shape)
-
         temporal = torch.max(words, dim=1).values
         temporal = temporal.half()
-
         #for encoder in self.temporal_encoding:
         #    temporal = encoder.forward(temporal)
-        # We can try some cross attention? Or passing the concatenated head through something else?
-
         temporal = temporal.squeeze(dim=1)
-        # Lets see what we can do with this dataset?
         temporal = torch.cat((temporal, images[:, -1, :].squeeze(dim=1)), dim=1)
-
         for mod in self.mlpHead:
             temporal = mod(temporal)
-
         return temporal

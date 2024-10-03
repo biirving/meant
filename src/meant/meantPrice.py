@@ -11,11 +11,8 @@ from transformers import AutoModel, AutoTokenizer
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# okay, lets run these experiments
-# because
 MAX_SEQ_LENGTH = 3333
 
-# how does this scale to deal with an arbitrary lag period
 class temporalEncoder(nn.Module):
     def __init__(self, dim, num_heads, lag, use_rot_embed=False):
         super(temporalEncoder, self).__init__()

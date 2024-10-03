@@ -22,7 +22,6 @@ labels_directory ='/work/nlp/b.irving/stock/labels_2'
 macd_directory = '/work/nlp/b.irving/stock/macd'
 
 tickers = []
-# Iterate over the files in the specified directory
 
 
 parser = argparse.ArgumentParser()
@@ -119,10 +118,6 @@ print('Features gathered.')
 #all_xs = np.load('all_xs_10.npy')
 #all_ys = np.load('all_ys_10.npy')
 
-# Doing SMOTE on this will take a long time to run
-# is any of this worth it?
-# YES. Synethetic data is really important
-# will this work, ah ah ahhhhh
 smote = SMOTE()
 X_minority_resampled, y_minority_resampled = smote.fit_resample(all_xs, all_ys)
 
@@ -135,7 +130,6 @@ print('Resampling complete.')
 #y_minority_resampled = np.load('y_resampled.npy')
 
 # Is this the way to do this...
-# I have no idea. Stay the course, and submit this paper
 print('Saving images and tweets...')
 images = X_minority_resampled[:, :1003520]
 print('images', images.shape)
@@ -154,4 +148,3 @@ np.save('/work/nlp/b.irving/stock/complete/graphs_' + str(lag) + '.npy', images_
 np.save('/work/nlp/b.irving/stock/complete/tweets_' + str(lag) + '.npy', tweets_to_save)
 np.save('/work/nlp/b.irving/stock/complete/macds_' + str(lag) + '.npy', macds_to_save)
 print('Process complete.')
-# now, reshape and save the respective numpy arrays

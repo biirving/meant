@@ -8,8 +8,6 @@ import math
 import PIL
 import sys, os 
 
-# divided space-time attention
-# okay how we gonna do this??
 class dividedSpaceTimeAttention(nn.Module):
     def __init__(self, num_heads, dim, n, num_frames, self, num_heads, pos_emb:RotaryEmbedding, mask=False, droput=0.):
         super(dividedSpaceTimeAttention, self).__init__()

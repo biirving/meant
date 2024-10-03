@@ -10,11 +10,9 @@ A classic attention mechanism with support for axial-2D embeddings (images)
 """
 class attention(nn.Module):
 
-    # the default values in the original paper for num_heads and dim are 5 and 50 respectively
     def __init__(self, num_heads, dim, pos_emb:RotaryEmbedding, mask=False, droput=0.):
         super(attention, self).__init__()
 
-        # what is the dimension of the attention head
         self.num_heads = num_heads
         self.dim = dim
         self.Dh = int(self.dim/self.num_heads)

@@ -218,8 +218,6 @@ class meant_tweet(nn.Module):
 
 
 
-    # This is the model which gave me stocknet
-    # but I can do even better
     def forward(self, **kwargs):
         tweets = kwargs.get('input_ids')
         prices = kwargs.get('prices').half()
@@ -242,15 +240,10 @@ class meant_tweet(nn.Module):
         # There are sep tokens!
         # We should figure out which tweets are important, and which ones aren't (in the sequence, and in the lag period)
         # We should use a softmax in our lang projection!
-
         # This detects what we should use in a sequence...
         # But what about which lag days are important?
-
         # mean pooling works way better
-        # Does it? Does it really?
         #words = torch.mean(words, dim=2)
-
-
 
         #temp_atten_mask = torch.ones((words.shape[0], words.shape[1], self.seq_len), dtype=torch.float)
 
@@ -274,7 +267,6 @@ class meant_tweet(nn.Module):
         # This should be the same everytime
         #temporal = torch.cat((words, repeat(prices, 'b l p -> b l s p', s=self.seq_len)), dim=3)
 
-
         # Should we feed the prices both to the temporal encoder and withdraw from the distribution
         # first off: the words matrix should be projected into a lower dimension so the prices have more weights
         ##words = self.lang_red(words)
@@ -294,9 +286,6 @@ class meant_tweet(nn.Module):
         temporal = self.temp_proj(temporal)
         temporal = torch.cat((temporal, inf_score), dim=1)
 
-        # Lets see how this recurrence does
-
-        
         # Again: Project the temporal data do contribute a balanced amount of information
         for mod in self.mlpHead:
             temporal = mod(temporal)

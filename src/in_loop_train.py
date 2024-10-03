@@ -46,7 +46,6 @@ sys.path.append('/work/nlp/b.irving/michinaga/teanet/utils/')
 import classicAttention
 from teanet import teanet
 
-
 # detecting where nans originate from
 #torch.autograd.set_detect_anomaly(True)
 

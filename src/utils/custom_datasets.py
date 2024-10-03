@@ -14,8 +14,6 @@ import pandas as pd
 def replace_emojis_with_text(text):
     return emoji.demojize(text) 
 
-# custom datasets classes for loading different tasks
-# dynamic padding for the longest sequence?
 class mlm_dataset(Dataset):
     def __init__(self, dataset, split, tokenizer, max_length=256, mlm_probability=0.15):
         # Select the split of the dataset

@@ -13,12 +13,8 @@ from transformers import AutoModel, AutoTokenizer
 from src.utils.rms_norm import RMSNorm 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# Check if CUDA is available
 if torch.cuda.is_available():
-    # Get the name of the CUDA device
     cuda_device_name = torch.cuda.get_device_name(0)
-
-    # Check if the device name contains "Ampere" or a later architecture
     if "Ampere" in cuda_device_name or "A100" in cuda_device_name:
         ampere = True
     else:
@@ -27,13 +23,9 @@ else:
     print("CUDA is not available on this system.")
     ampere = False
 
-# okay, lets run these experiments
-# because
 MAX_SEQ_LENGTH = 3333
 
-# should the vision encoder encode temporal information?
 class visionEncoder(nn.Module):
-    # we should pretrain the patch embeddings, right?
     def __init__(self, dim, num_heads, flash=False):
         """
         The initial encoder for extracting relevant features from the multimodal input.
@@ -67,10 +59,8 @@ class visionEncoder(nn.Module):
         final_resid = inter
         for mod in self.encode2:
             inter = mod(inter)
-        # then another residual connection before the output is processed
         return inter + final_resid
 
-# separate encoder module, because might make changes to structure
 class languageEncoder(nn.Module):
     def __init__(self, dim, num_heads, dropout=0.0, flash=False):
         """
@@ -114,8 +104,6 @@ class languageEncoder(nn.Module):
             inter = mod(inter)
         return inter + final_resid
 
-# how does this scale to deal with an arbitrary lag period
-# lets make this multimodal temporal model, shall we?
 class temporalEncoder(nn.Module):
     def __init__(self, dim, num_heads, lag):
         super(temporalEncoder, self).__init__()
@@ -159,35 +147,18 @@ class meant_vqa(nn.Module):
         """
         super(meant_vqa, self).__init__()
 
-        # recent additions for editing purposes
         self.lag = lag
         self.text_dim = text_dim
         self.image_dim = image_dim
 
-        # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
         self.dim = text_dim + image_dim 
         self.num_heads = num_heads
 
-        # for the image component of the encoder
         self.channels = channels
         self.patch_dim = self.channels * patch_res * patch_res
         self.n = int((height * width) / (patch_res ** 2))
 
-        # pretrained language embedding from hugging face model
-        # what if we have already used the flair embeddings
         self.embedding = nn.ModuleList([embedding])
-        #self.embedding_alt = nn.Linear(1, 768)
-
-        # classification token for the image component. Will be passed to the temporal attention mechanism
-        #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
-
-        # the patch embedding for the image
-        # we have to apply it to every image in the lag period
-        # c = channel
-        # h = height
-        # w = width
-        # b = batch
-        # f = the number of frames we are processing
         self.patchEmbed = nn.Sequential(
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
             nn.Linear(self.patch_dim, image_dim))
@@ -208,18 +179,12 @@ class meant_vqa(nn.Module):
         for mod in self.embedding:
             words = mod(words)
 
-        # perhaps change these back?
         for encoder in self.languageEncoders:
             words = encoder.forward(words, attention_mask)
 
         images = self.patchEmbed(images)
         for encoder in self.visionEncoders:
             images = encoder.forward(images)
-
-        # how can we translate our temporal attention mechanism
-
-        # this is not gonna cut it
-        # there should be some sort of cross attention from the inputs
         temporal = torch.cat((torch.mean(words, dim=1), torch.mean(images, dim=1)), dim = 1)
 
         #temporal = temporal.unsqueeze(dim=2)

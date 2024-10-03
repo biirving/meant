@@ -95,9 +95,6 @@ class temporalEncoder(nn.Module):
 
     def forward(self, x):
         b, l, d = x.shape
-        # the temporal embedding is the positional embedding?
-        #temp_embed = repeat(self.temp_embedding, '1 l d -> b l d', b = b)
-        #x += temp_embed
         for mod in self.temp_encode:           
             x = mod(x)
         return x
@@ -118,23 +115,14 @@ class meant_vision(nn.Module):
         """
         super(meant_vision, self).__init__()
         
-        # concatenation strategy: A simple concatenation to feed the multimodal information into the encoder.
         self.dim = price_dim 
         self.image_dim = image_dim
         self.output_dim = price_dim + image_dim
         self.num_heads = num_heads
-
-        # for the image component of the encoder
         self.channels = channels
         self.patch_dim = self.channels * patch_res * patch_res
         self.n = int((height * width) / (patch_res ** 2))
 
-        # the patch embedding for the image
-        # we have to apply it to every image in the lag period
-        # c = channel
-        # h = height
-        # w = width
-        # b = batch
         self.patchEmbed = nn.Sequential(
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
             nn.Linear(self.patch_dim, image_dim))

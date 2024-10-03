@@ -224,17 +224,13 @@ class meant_mean_pooling(nn.Module):
         self.dim = text_dim  + price_dim #+ image_dim
         self.num_heads = num_heads
 
-        # for the image component of the encoder
         self.channels = channels
         self.patch_dim = self.channels * patch_res * patch_res
         self.n = int((height * width) / (patch_res ** 2))
 
-        # pretrained language embedding from hugging face model
-        # what if we have already used the flair embeddings
         self.embedding = nn.ModuleList([embedding])
         #self.embedding_alt = nn.Linear(1, 768)
 
-        # maybe we should use a class token
 
         # classification token for the image component. Will be passed to the temporal attention mechanism
         #self.cls_token = nn.Parameter(torch.randn(1, lag, 1, image_dim))
