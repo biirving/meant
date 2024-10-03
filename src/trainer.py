@@ -18,6 +18,7 @@ from transformers import (
     ViltModel,
     ViltProcessor,
     BertModel,
+    AutoModelForAudioClassification
     #DebugUnderflowOverflow,
 )
 from datasets import load_dataset
@@ -268,7 +269,7 @@ class meant_trainer():
                         out = self.model.forward(**batch)
                     val_metrics.update(out.detach().cpu(), batch['labels'].detach().cpu()) 
 
-            val_f1_macro, val_f1_micro = val_metrics.show() 
+            val_f1_macro, val_f1_micro, non_zero_f1 = val_metrics.show() 
             if self.early_stopping:
                 if(val_f1_macro <= prev_f1):
                     patience += 1
@@ -658,7 +659,7 @@ if __name__=='__main__':
                 input_dim=5,
                 output_dim=args.num_classes,
                 hidden_dim=64,
-                num_hidden_layers=1
+                num_hidden_layers=5000
             ).cuda()
             use_prices=True
             use_images=False
@@ -729,6 +730,8 @@ if __name__=='__main__':
             collate_fn = lag_image_collator
             tokenizer = None
         elif args.model_name == 'meant_mosi':
+            #audio_model = AutoModelForAudioClassification.from_pretrained(
+            #"facebook/wav2vec2-base", num_labels=2)
             fin_bert = AutoModel.from_pretrained('ProsusAI/finbert')
             tokenizer = AutoTokenizer.from_pretrained('ProsusAI/finbert')
             model = meant_mosi(text_dim = 768, 
@@ -741,6 +744,7 @@ if __name__=='__main__':
                 flash=False,
                 embedding=fin_bert.embeddings,
                 num_encoders=args.num_encoders).to(device)
+                #audio_embeddings=audio_model.wav2vec2.encoder.pos_conv_embed).to(device)
             use_images = True
             use_tweets = True
             use_prices = False 
@@ -911,6 +915,8 @@ if __name__=='__main__':
         with open(filepath, "rb") as f:
             alldata = pickle.load(f)
         alldata['train'] = drop_entry(alldata['train'])
+        print(alldata['train'].keys())
+        sys.exit()
         alldata['valid'] = drop_entry(alldata['valid'])
         alldata['test'] = drop_entry(alldata['test'])
         train_loader = alldata['train']

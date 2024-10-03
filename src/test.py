@@ -8,12 +8,34 @@ from transformers import ViltProcessor, ViltModel
 from PIL import Image
 import requests
 import numpy as np
-sys.path.append('..')
+import transformers
+from transformers import AutoTokenizer, VisualBertModel, ViltModel, AutoModel
+sys.path.append('../')
+from src.meant.simple_mlp import mlpEncoder, LSTMEncoder
 
-# prepare image and text
-model = torch.load('/work/nlp/b.irving/meant_runs/models/meant_timesformer/meant_timesformer_1_TempStockLarge_0_15.pt')
+
+
+model = LSTMEncoder(
+                input_dim=5,
+                output_dim=2,
+                hidden_dim=64,
+                num_hidden_layers=5000
+            )
 total_params = sum(p.numel() for p in model.parameters())
-print(f'Total number of parameters: {total_params}')
+print(f'Total number of parameters: {total_params}')       
+sys.exit()
+# prepare image and text
+#model = torch.load('/work/nlp/b.irving/meant_runs/models/meant_timesformer/meant_timesformer_1_TempStockLarge_0_15.pt')
+
+vl_bert_model = VisualBertModel.from_pretrained("uclanlp/visualbert-vqa-coco-pre")
+vilt = ViltModel.from_pretrained("dandelin/vilt-b32-mlm")
+bertweet = AutoModel.from_pretrained("vinai/bertweet-base")
+total_params = sum(p.numel() for p in vl_bert_model.parameters())
+print(f'vl Total number of parameters: {total_params}')
+total_params = sum(p.numel() for p in vilt.parameters())
+print(f'vil Total number of parameters: {total_params}')
+total_params = sum(p.numel() for p in bertweet.parameters())
+print(f'Bert number of parameters: {total_params}')
 
 sys.exit()
 texts = pd.read_csv('/scratch/irving.b/stock/TempStockLarge.csv')

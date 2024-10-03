@@ -270,6 +270,11 @@ def lag_text_image_collator(batch):
     if 'prices' in list(batch[0].keys()):
         prices = torch.stack([torch.from_numpy(period['prices']) for period in batch])
         return {'input_ids':input_ids, 'attention_mask':attention_mask, 'prices':prices,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask}
+    elif 'audio' in list(batch[0].keys()):
+        audio = torch.stack([torch.from_numpy(period['audio']) for period in batch])
+        # I don't know if this is the way to make the mask though. They are not of shape 130?
+        audio_attention_mask = (audio.sum(dim=-1) != 0).long()  # Shape: (b, 50)
+        return {'input_ids':input_ids, 'attention_mask':attention_mask, 'audio':audio,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask, 'audio_mask':audio_attention_mask}
     else:
         return {'input_ids':input_ids, 'attention_mask':attention_mask,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask}
 
@@ -284,6 +289,10 @@ def lag_text_image_collator_no_lag(batch):
     if 'prices' in list(batch[0].keys()):
         prices = torch.stack([torch.from_numpy(period['prices']) for period in batch])
         return {'input_ids':input_ids, 'attention_mask':attention_mask, 'prices':prices,  'pixels':pixels, 'labels':labels}
+    elif 'audio' in list(batch[0].keys()):
+        audio = torch.stack([torch.from_numpy(period['audio']) for period in batch])
+        audio_attention_mask = (audio.sum(dim=-1) != 0).long()  # Shape: (b, 50)
+        return {'input_ids':input_ids, 'attention_mask':attention_mask, 'audio':audio,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask, 'audio_mask':audio_attention_mask}
     else:
         return {'input_ids':input_ids, 'attention_mask':attention_mask,  'pixels':pixels, 'labels':labels, 'pixel_mask':pixel_mask}
 
@@ -572,7 +581,7 @@ class mosi_dataset(Dataset):
         self.data = data
 
         self.tokenizer = kwargs.get('tokenizer', None)
-        self.max_length = kwargs.get('max_length', 512)
+        self.max_length = kwargs.get('max_length', 128)
         self.lag_period = kwargs.get('lag_period', 50)
         self.use_images = kwargs.get('use_images', True)
         self.use_text = kwargs.get('use_tweets', True)
@@ -586,15 +595,16 @@ class mosi_dataset(Dataset):
     def __getitem__(self, idx):
         vision = self.data['vision'][idx]
         text = self.data['raw_text'][idx]
+        audio = self.data['audio'][idx]
         spectrum_label = self.data['classification_labels'][idx]
         all_text = []
 
         tokenized_text = self.tokenizer(text, truncation=True, max_length=self.max_length, add_special_tokens=True)
 
         # We want to align the text with the video? I guess with the dual encoder stream it doesn't really matter
-
         if spectrum_label > 0:
             label = 1
         else:
             label = 0
-        return {'input_ids':np.array(tokenized_text['input_ids']),  'pixels':vision, 'labels':label}
+
+        return {'input_ids':np.array(tokenized_text['input_ids']),  'audio':audio, 'pixels':vision, 'labels':label}

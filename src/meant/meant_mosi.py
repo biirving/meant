@@ -13,6 +13,7 @@ from src.utils.rms_norm import RMSNorm
 from rotary_embedding_torch import RotaryEmbedding
 import math
 from transformers import AutoModel, AutoTokenizer
+from positional_encodings.torch_encodings import PositionalEncodingPermute1D, Summer
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -201,7 +202,7 @@ class temporalEncoder(nn.Module):
 
 class meant_mosi(nn.Module):
     # what happens if I try to just use the embedding layer anyways?
-    def __init__(self, text_dim, image_dim, height, width, patch_res, lag, num_classes, embedding=None, flash=False, num_heads= 8, num_encoders = 1, channels=3, seq_len=512):
+    def __init__(self, text_dim, image_dim, height, width, patch_res, lag, num_classes, audio_embeddings=None, embedding=None, flash=False, num_heads= 8, num_encoders = 1, channels=3, seq_len=512):
         """
         Args
             dim: The dimension of the input to the encoder
@@ -232,6 +233,11 @@ class meant_mosi(nn.Module):
 
         if embedding is not None:
             self.embedding = nn.ModuleList([embedding])
+        else:
+            self.embedding = None
+        
+        if audio_embeddings is not None:
+            self.audio_embeddings = nn.ModuleList([embedding])
         else:
             self.embedding = None
 
@@ -278,12 +284,18 @@ class meant_mosi(nn.Module):
             Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_res, p2 = patch_res),
             nn.Linear(self.patch_dim, image_dim))
 
+        
+
 
         self.visinoEncoders = nn.ModuleList([])
     
         self.embedding = nn.ModuleList([embedding])
 
         self.lang_proj = nn.Sequential(nn.Linear(self.text_dim, 1), nn.LayerNorm(1), nn.GELU())
+
+        # am I just wasting my time
+        # no. This is somewhat satisfying...
+        # and I can push this across the finish line. I just need a little more juice.
         # Should have just made a new class called MEANT TimeSFormer
 
         # Don't know if I need this
@@ -294,13 +306,34 @@ class meant_mosi(nn.Module):
         # we are going to try some different stuff
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.text_dim, num_heads, lag, use_rot_embed=False)])
 
+        self.lang_prep = nn.Sequential(nn.Linear(self.text_dim, self.text_dim), nn.LayerNorm(self.text_dim), nn.GELU(), nn.Linear(self.text_dim, 1), nn.Softmax(dim=2))
+        self.lang_red = nn.Sequential(nn.Linear(self.text_dim, 5), nn.LayerNorm(5), nn.GELU())
+
         # output head
         # Gonna have to refactor this
-        self.other_dim=788
+        self.other_dim=1536
         self.mlpHead = nn.ModuleList([nn.LayerNorm(self.other_dim), nn.Linear(self.other_dim, num_classes), nn.Sigmoid()])
 
         self.seq_len = seq_len
 
+        self.audio_embedding_dim=130
+        encoder_layer = nn.TransformerEncoderLayer(d_model=self.audio_embedding_dim, nhead=2, batch_first=True, dim_feedforward=512)
+        self.audio_emb = nn.Embedding(num_embeddings=1, embedding_dim=self.audio_embedding_dim)
+        self.audio_encoder = nn.TransformerEncoder(encoder_layer, num_layers=3,enable_nested_tensor=False)
+
+    def prepend_cls(self, inputs, masks):
+        index = torch.LongTensor([0]).to(device=inputs.device)
+        cls_emb = self.audio_emb(index)
+        cls_emb = cls_emb.expand(inputs.size(0), 1, self.audio_embedding_dim)
+        print(cls_emb.shape)
+        print(inputs.shape)
+        outputs = torch.cat((cls_emb, inputs), dim=1)
+
+        
+        cls_mask = torch.zeros(inputs.size(0), 1).to(device=inputs.device)
+        # How is the attention mask made
+        masks = torch.cat((cls_mask, masks), dim=1)
+        return outputs, masks
 
     # It is not going to work just straight out of the box
     # Maybe think for a second: Huh, what could be going wrong?
@@ -311,6 +344,10 @@ class meant_mosi(nn.Module):
         prices = kwargs.get('prices')
         images = kwargs.get('pixels')
         pixel_mask = kwargs.get('pixel_mask')
+        # How are you going to mask this
+        audio = kwargs.get('audio')
+        audio_attention_mask = kwargs.get('audio_mask')
+        
 
         attention_mask = kwargs.get('attention_mask')
         _batch = images.shape[0]
@@ -322,7 +359,12 @@ class meant_mosi(nn.Module):
 
         for mod in self.embedding:
             words = mod(words, attention_mask) 
-
+        
+        audio, audio_masks = self.prepend_cls(audio, audio_attention_mask)
+        pos_enc = Summer(PositionalEncodingPermute1D(audio.shape[1])).cuda()
+        
+        audio = pos_enc(audio)
+        audio = self.audio_encoder(audio, src_key_padding_mask=audio_attention_mask.bool())
         
         # so it spits out some arbitrary length sequence...
             
@@ -345,11 +387,22 @@ class meant_mosi(nn.Module):
 
         # We should use timesformer, but it should return in my lag form?
 
+        # Dude, one good result, and this is getting thrown in there... 
+        # Just get me above 80 chieftan
+        # Just get me above 80...
+        # Then, I will ride into the promise land
+        # Right now, we are cooking with 60
+
+
+        # I just need one good result on here and I am cooking...
+        # there are some problems obviously
+                        
         images = self.timesformer.meant_forward(images.unsqueeze(dim=2).unsqueeze(dim=3).half()) #, mask=pixel_mask)
         images = images[:, 1:, :] 
         images = rearrange(images, 'b (l s) d-> b l s d', l=self.lag)
-        print(images.shape)
-        print(words.shape)
+
+
+
 
         #act_seq_len = words.shape[3]
         #if act_seq_len < self.seq_len:
@@ -358,19 +411,20 @@ class meant_mosi(nn.Module):
 
         # mosi mosi mosi mosi
         #words = self.lang_proj(words).squeeze(dim=2)
-        #images = self.image_proj(images).squeeze(dim=2)
+
 
         # come on baby
         # THIS is the dataset this model was MEANT for
+        #print(words.shape)
 
         temporal = torch.max(words, dim=1).values
         temporal = temporal.half()
 
-        for encoder in self.temporal_encoding:
-            temporal = encoder.forward(temporal)
+        #for encoder in self.temporal_encoding:
+        #    temporal = encoder.forward(temporal)
         # We can try some cross attention? Or passing the concatenated head through something else?
 
-        #temporal = temporal.squeeze(dim=1)
+        temporal = temporal.squeeze(dim=1)
         # Lets see what we can do with this dataset?
         temporal = torch.cat((temporal, images[:, -1, :].squeeze(dim=1)), dim=1)
 

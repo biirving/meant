@@ -166,7 +166,7 @@ class meant_tweet(nn.Module):
         self.languageEncoders = nn.ModuleList([languageEncoder(text_dim, num_heads, flash=flash, dropout=0.1) for i in range(num_encoders)])
 
         self.temporal_encoding = nn.ModuleList([temporalEncoder(self.dim, num_heads, lag, sequence_length=sequence_length)])
-        self.temp_proj = nn.Linear(self.dim, 1)
+        self.temp_proj = nn.Linear(771, 1)
 
 
         # I think this might be the way to extract our 'important' tweets
@@ -181,7 +181,7 @@ class meant_tweet(nn.Module):
 
         #self.mlpHead = nn.ModuleList([nn.LayerNorm(sequence_length), nn.Linear(sequence_length, num_classes), nn.Sigmoid()])
         #self.other_dim=1541
-        self.mlpHead = nn.ModuleList([nn.LayerNorm(self.dim), nn.Linear(self.dim, num_classes), nn.Sigmoid()])
+        self.mlpHead = nn.ModuleList([nn.LayerNorm(2), nn.Linear(2, num_classes), nn.Sigmoid()])
         self.lag = lag
         self.seq_len = sequence_length 
 
@@ -206,17 +206,14 @@ class meant_tweet(nn.Module):
         b = x_t.shape[0]
         inf_score = torch.zeros(b, 1).cuda()
         for i in range(self.lag):
-            print(x_t[:, i].shape)
-            print(inf_score.shape)
-
             # Recurrently updating the informational scored based on the previous day's prices and label
-            mean = self.mean_weight(torch.cat((x_t[:, i], inf_score)))
-            var = self.vars_weight(torch.cat((x_t[:, i], inf_score)))
+            mean = self.mean_weight(torch.cat((x_t[:, i], inf_score), dim=1))
+            var = self.vars_weight(torch.cat((x_t[:, i], inf_score), dim=1))
             dist = Normal(mean, var.exp())
-            # Reparameterization Trick
+            # Reparameterization Trick: Our distribution is differentiable
             z_cur = dist.rsample()
-            print(z_cur.shape)
-            inf_score = self.z_mat(torch.cat((z_cur, x_t[:, i])))
+            # the residual connection should give some stability as well
+            inf_score = self.z_mat(torch.cat((z_cur, x_t[:, i]), dim=1))
         return inf_score
 
 
@@ -293,11 +290,15 @@ class meant_tweet(nn.Module):
             # then do we sample from a distribution?
 
         inf_score = self.conditional_dist(prices)
-        print(temporal.shape)
-        print(inf_score.shape)
+
+        temporal = self.temp_proj(temporal)
+        temporal = torch.cat((temporal, inf_score), dim=1)
+
+        # Lets see how this recurrence does
+
         
         # Again: Project the temporal data do contribute a balanced amount of information
         for mod in self.mlpHead:
-            temporal = mod(temporal, inf_score)
+            temporal = mod(temporal)
 
         return temporal

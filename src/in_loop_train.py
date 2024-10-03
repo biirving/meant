@@ -35,6 +35,7 @@ from src.utils.f1_metrics import f1_metrics
 from src.utils.custom_datasets import djia_lag_dataset, lag_text_collator 
 from src.pretrain_mlm import meant_language_pretrainer
 from src.pretrain_mim import meant_vision_pretrainer
+from src.meant.simple_mlp import mlpEncoder, LSTMEncoder
 
 from torch.utils.tensorboard import SummaryWriter
 import wandb
@@ -261,6 +262,8 @@ class meant_trainer():
                     target = batch['label']
                     with torch.autocast(device_type="cuda", dtype=torch_dtype):
                         batch['input_ids'] = batch['input_ids'].long()
+                        if 'prices' in list(batch.keys()):
+                            batch['prices'] = batch['prices'][:, :, :].squeeze(dim=1).half()
                         out = model(**batch)
                         loss = loss_fct(out, target.to(device).long())                
                     scaler.scale(loss).backward()
@@ -307,6 +310,9 @@ class meant_trainer():
                         target = batch['label']
                         with torch.autocast(device_type="cuda", dtype=torch_dtype):
                             batch['input_ids'] = batch['input_ids'].long()
+                            if 'prices' in list(batch.keys()):
+                                #batch['prices'] = batch['prices'].squeeze(dim=1).half()
+                                batch['prices'] = batch['prices'][:, :, :].squeeze(dim=1).half()
                             out = model(**batch)
                         out = out.detach().cpu()
                         target = target.detach().cpu()
@@ -364,6 +370,11 @@ class meant_trainer():
                             target = batch['label']
                             with torch.autocast(device_type="cuda", dtype=torch_dtype):
                                 batch['input_ids'] = batch['input_ids'].long()
+                                if 'prices' in list(batch.keys()):
+                                    #batch['prices'] = batch['prices'].squeeze(dim=1).half()
+                                    # Lets see how this rips
+                                    batch['prices'] = batch['prices'][:, :, :].squeeze(dim=1).half()
+
                                 out = model(**batch)
                             out = out.detach().cpu()
                             target = target.detach().cpu()
@@ -536,6 +547,32 @@ if __name__=='__main__':
             gc.collect()
         elif args.model_name == 'teanet':
             model = teanet(5, 512, 2, 5, 12, 10, embedding=bertweet.embeddings).cuda()
+        elif args.model_name == 'simple_mlp_no_lag':
+            model = mlpEncoder(
+                input_dim=4,
+                output_dim=args.num_classes,
+                hidden_dim=64,
+                num_hidden_layers=1000
+            ).cuda()
+            total_params = sum(p.numel() for p in model.parameters())
+            print('total params', total_params)
+            use_prices=True
+            use_images=False
+            use_lag=False
+            use_tweets=False
+            tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base")
+        elif args.model_name == 'lstm':
+            model = LSTMEncoder(
+                input_dim=4,
+                output_dim=args.num_classes,
+                hidden_dim=64,
+                num_hidden_layers=1
+            ).cuda()
+            use_prices=True
+            use_images=False
+            use_lag=False
+            use_tweets=False
+            tokenizer = AutoTokenizer.from_pretrained("vinai/bertweet-base")
         else:
             raise ValueError('Pass a valid model name.')
     else:

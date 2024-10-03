@@ -270,8 +270,12 @@ class meant_timesformer(nn.Module):
         # helps at all
         # A better representation of our entire sequences
 
-        self.lang_proj = nn.Sequential(nn.Linear(seq_len, 1), nn.LayerNorm(1), nn.GELU())
+        #self.lang_proj = nn.Sequential(nn.Linear(seq_len, 1), nn.LayerNorm(1), nn.GELU())
+        self.lang_prep = nn.Sequential(nn.Linear(text_dim, text_dim), nn.LayerNorm(text_dim), nn.GELU(), nn.Linear(text_dim, 1), nn.Softmax(dim=2))
+        self.lang_red = nn.Sequential(nn.Linear(text_dim, 5), nn.LayerNorm(5), nn.GELU())
         # Should have just made a new class called MEANT TimeSFormer
+
+        self.image_prep = nn.Sequential(nn.Linear(image_dim, image_dim), nn.LayerNorm(image_dim), nn.GELU(), nn.Linear(image_dim, 1), nn.Softmax(dim=2))
         self.image_proj = nn.Sequential(nn.Linear(981, 1), nn.LayerNorm(1), nn.GELU())
 
         # so we are printing out everything in here
@@ -306,12 +310,12 @@ class meant_timesformer(nn.Module):
         for encoder in self.languageEncoders:
             words = encoder.forward(words, attention_mask)
 
-        words = rearrange(words, '(b l) s d-> b l d s', b = _batch)
+        words = rearrange(words, '(b l) s d-> b l s d', b = _batch)
         # Lets try with a TimeSFormer as well. Why not?
 
         # Pixel mask!
         images = self.timesformer.meant_forward(images) #, mask = pixel_mask)
-        images = rearrange(images, 'b p d -> b d p') 
+        #images = rearrange(images, 'b p d -> b p') 
         #images = rearrange(images, 'b l c h w -> (b l) c h w')
         #images = self.patchEmbed(images)
         #for encoder in self.visionEncoders:
@@ -321,14 +325,24 @@ class meant_timesformer(nn.Module):
         # See if this even processes?
         # Divided space time attention on the graphs?
 
-        act_seq_len = words.shape[3]
+        act_seq_len = words.shape[2]
         if act_seq_len < self.seq_len:
             padding = self.seq_len - act_seq_len 
-            words = nn.functional.pad(words, (0, padding))
+            #words = nn.functional.pad(words, (0, padding))
+            words = nn.functional.pad(words, (0, 0, 0, padding))
 
         # these sequences are projected by a learned embedding strategy
-        words = self.lang_proj(words).squeeze(dim=3)
-        images = self.image_proj(images).squeeze(dim=2)
+        #words = self.lang_proj(words).squeeze(dim=3)
+        word_intelligence = self.lang_prep(words)
+        words = torch.matmul(words.transpose(2, 3), word_intelligence)
+        words = words.squeeze(dim=-1)
+
+        # Maybe we should do this for the images as well
+        #images = self.image_proj(images).squeeze(dim=2)
+        # Now we intelligently select our images as well
+        image_projection = self.image_prep(images)
+        images = torch.matmul(images.transpose(1, 2), image_projection)
+        images = images.squeeze(dim=-1)
 
         temporal = torch.cat((words, prices), dim = 2)
         temporal = temporal.half()
